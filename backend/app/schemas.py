@@ -99,6 +99,30 @@ class PasswordChange(BaseModel):
 # ---------------------------------------------------------------------------
 # 卫星配置
 # ---------------------------------------------------------------------------
+# 状态语义：前端使用业务字符串三态，数据库存储整型。
+SATELLITE_STATUS_STR_TO_INT = {"active": 1, "standby": 2, "retired": 3}
+SATELLITE_STATUS_INT_TO_STR = {1: "active", 2: "standby", 3: "retired"}
+
+
+def _sat_status_to_int(v: Any) -> int:
+    """把前端字符串状态映射为数据库整型（兼容已有整型直接透传）"""
+    if isinstance(v, bool) or isinstance(v, int):
+        return int(v)
+    if isinstance(v, str):
+        mapped = SATELLITE_STATUS_STR_TO_INT.get(v.strip())
+        if mapped is None:
+            raise ValueError(f"非法卫星状态: {v}")
+        return mapped
+    return 1
+
+
+def _sat_status_to_str(v: Any) -> str:
+    """把数据库整型状态映射回前端字符串三态"""
+    if isinstance(v, str):
+        return v if v in SATELLITE_STATUS_STR_TO_INT else "active"
+    return SATELLITE_STATUS_INT_TO_STR.get(v, "active")
+
+
 class SatelliteBase(BaseModel):
     name: str = Field(max_length=128)
     code: str = Field(max_length=64)
@@ -110,6 +134,11 @@ class SatelliteBase(BaseModel):
 class SatelliteCreate(SatelliteBase):
     status: int = 1
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v: object) -> object:
+        return _sat_status_to_int(v)
+
 
 class SatelliteUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=128)
@@ -117,15 +146,27 @@ class SatelliteUpdate(BaseModel):
     orbit_type: Optional[str] = Field(default=None, max_length=64)
     launch_date: Optional[date] = None
     description: Optional[str] = None
-    status: Optional[int] = Field(default=None, ge=0, le=1)
+    status: Optional[int] = Field(default=None, ge=0, le=3)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status_upd(cls, v: object) -> object:
+        if v is None:
+            return None
+        return _sat_status_to_int(v)
 
 
 class SatelliteOut(SatelliteBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    status: int
+    status: str
     created_at: Optional[datetime] = None
     param_count: int = 0
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _out_status(cls, v: object) -> str:
+        return _sat_status_to_str(v)
 
 
 # ---------------------------------------------------------------------------

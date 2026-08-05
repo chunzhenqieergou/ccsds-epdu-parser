@@ -40,8 +40,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods="*",
+    allow_headers="*",
 )
 
 
@@ -90,3 +90,4 @@ def health():
 @app.get("/")
 def root():
     return {"code": 0, "message": settings.APP_NAME, "data": {"docs": "/docs"}}
+
