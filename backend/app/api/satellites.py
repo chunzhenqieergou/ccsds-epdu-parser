@@ -18,7 +18,7 @@ router = APIRouter()
 def list_satellites(
     keyword: str | None = Query(None, description="按 code/name 模糊搜索"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(15, ge=1, le=100),
+    page_size: int = Query(15, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
