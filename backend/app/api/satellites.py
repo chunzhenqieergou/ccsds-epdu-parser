@@ -13,6 +13,7 @@ from ..deps import get_current_user, require_operator, log_action, get_db
 router = APIRouter()
 
 
+@router.get("", include_in_schema=False)
 @router.get("/")
 def list_satellites(
     keyword: str | None = Query(None, description="按 code/name 模糊搜索"),
@@ -50,6 +51,7 @@ def list_satellites(
     )
 
 
+@router.post("", status_code=201, include_in_schema=False)
 @router.post("/", status_code=201)
 def create_satellite(
     body: schemas.SatelliteCreate,

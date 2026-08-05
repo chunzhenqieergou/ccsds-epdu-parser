@@ -21,6 +21,7 @@ def _channel_out(channel: models.Channel) -> schemas.ChannelOut:
     return out
 
 
+@router.get("", include_in_schema=False)
 @router.get("/")
 def list_channels(
     satellite_id: int | None = Query(None, description="按卫星过滤"),
@@ -57,6 +58,7 @@ def list_channels(
     )
 
 
+@router.post("", status_code=201, include_in_schema=False)
 @router.post("/", status_code=201)
 def create_channel(
     body: schemas.ChannelCreate,

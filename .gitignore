@@ -27,3 +27,4 @@ Thumbs.db
 # Runtime / metadata
 .omo/
 .workbuddy/
+.playwright-mcp/

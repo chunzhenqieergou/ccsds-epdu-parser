@@ -19,6 +19,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # 1. 告警列表
 # ---------------------------------------------------------------------------
+@router.get("", include_in_schema=False)
 @router.get("/")
 def list_alarms(
     status: Optional[int] = Query(None, description="状态过滤: 0=未处理 1=已处理"),
@@ -95,6 +96,7 @@ def alarm_stats(
 # ---------------------------------------------------------------------------
 # 3. 创建告警
 # ---------------------------------------------------------------------------
+@router.post("", status_code=201, include_in_schema=False)
 @router.post("/", status_code=201)
 def create_alarm(
     body: schemas.AlarmCreate,
