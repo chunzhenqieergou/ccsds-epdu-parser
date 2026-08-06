@@ -556,7 +556,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .history-page {
-  max-width: 1400px;
 }
 
 .page-title {

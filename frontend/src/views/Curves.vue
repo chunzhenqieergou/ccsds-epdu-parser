@@ -530,7 +530,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.curves-page { max-width: 1400px; }
+.curves-page { }
 .page-header { margin-bottom: 16px; }
 .page-title { margin: 0 0 4px; font-size: 20px; color: #1a1a2e; }
 .page-desc { margin: 0; color: #999; font-size: 14px; }

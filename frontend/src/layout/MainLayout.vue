@@ -232,8 +232,9 @@ async function handleChangePassword() {
 }
 
 .sidebar {
-  background-color: #001529;
+  background: linear-gradient(180deg, #001529 0%, #002140 100%);
   overflow: hidden;
+  transition: width 0.3s ease;
 }
 
 .logo {
@@ -243,12 +244,14 @@ async function handleChangePassword() {
   justify-content: center;
   gap: 8px;
   cursor: pointer;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .logo-img {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 0 6px rgba(64, 158, 255, 0.4));
 }
 
 .logo-text {
@@ -256,6 +259,7 @@ async function handleChangePassword() {
   font-size: 18px;
   font-weight: 700;
   white-space: nowrap;
+  letter-spacing: 2px;
 }
 
 .sidebar-menu {
@@ -266,30 +270,48 @@ async function handleChangePassword() {
   width: 220px;
 }
 
+.sidebar-menu :deep(.el-menu-item):hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+.sidebar-menu :deep(.el-menu-item.is-active) {
+  background: linear-gradient(90deg, #1890ff, #096dd9) !important;
+  border-radius: 0 4px 4px 0;
+  margin: 4px 8px;
+  width: calc(100% - 16px);
+}
+
+.sidebar-menu :deep(.el-sub-menu__title):hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
 .topbar {
   background: #fff;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 24px;
   border-bottom: 1px solid #e8e8e8;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+  z-index: 10;
 }
 
 .topbar-left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
 }
 
 .collapse-btn {
   font-size: 20px;
   cursor: pointer;
   color: #666;
+  transition: color 0.2s, transform 0.2s;
 }
 
 .collapse-btn:hover {
-  color: #409eff;
+  color: #1890ff;
+  transform: scale(1.1);
 }
 
 .user-info {
@@ -299,15 +321,20 @@ async function handleChangePassword() {
   cursor: pointer;
   color: #333;
   font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: all 0.2s;
 }
 
 .user-info:hover {
-  color: #409eff;
+  color: #1890ff;
+  background: rgba(24, 144, 255, 0.06);
 }
 
 .main-content {
-  background: #f0f2f5;
-  padding: 20px;
+  background: linear-gradient(180deg, #f0f2f5 0%, #f5f7fa 100%);
+  padding: 24px;
   overflow-y: auto;
+  min-height: 0;
 }
 </style>

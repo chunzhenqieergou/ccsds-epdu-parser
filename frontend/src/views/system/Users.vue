@@ -217,7 +217,7 @@ onMounted(fetchUsers)
 </script>
 
 <style scoped>
-.users-page { max-width: 1400px; }
+.users-page { }
 .page-header { margin-bottom: 16px; }
 .page-title { margin: 0 0 4px; font-size: 20px; color: #1a1a2e; }
 .page-desc { margin: 0; color: #999; font-size: 14px; }

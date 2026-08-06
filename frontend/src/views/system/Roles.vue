@@ -59,7 +59,7 @@ onMounted(fetchRoles)
 </script>
 
 <style scoped>
-.roles-page { max-width: 1200px; }
+.roles-page { }
 .page-header { margin-bottom: 16px; }
 .page-title { margin: 0 0 4px; font-size: 20px; color: #1a1a2e; }
 .page-desc { margin: 0; color: #999; font-size: 14px; }

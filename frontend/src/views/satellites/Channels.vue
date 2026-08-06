@@ -320,7 +320,6 @@ onMounted(() => {
 
 <style scoped>
 .channels-page {
-  max-width: 1400px;
 }
 
 .page-header { margin-bottom: 16px; }

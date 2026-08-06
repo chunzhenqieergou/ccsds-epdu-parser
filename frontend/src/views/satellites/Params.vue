@@ -430,7 +430,6 @@ onMounted(() => {
 
 <style scoped>
 .params-page {
-  max-width: 1500px;
 }
 
 .page-header { margin-bottom: 16px; }

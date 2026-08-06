@@ -211,7 +211,7 @@ onMounted(fetchAlarms)
 </script>
 
 <style scoped>
-.alarms-page { max-width: 1400px; }
+.alarms-page { }
 .page-header { margin-bottom: 16px; }
 .page-title { margin: 0 0 4px; font-size: 20px; color: #1a1a2e; }
 .page-desc { margin: 0; color: #999; font-size: 14px; }

@@ -283,7 +283,6 @@ onMounted(() => {
 
 <style scoped>
 .satellite-list {
-  max-width: 1400px;
 }
 
 .page-header { margin-bottom: 16px; }
