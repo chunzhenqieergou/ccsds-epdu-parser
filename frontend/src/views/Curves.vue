@@ -402,19 +402,19 @@ function buildGaugeOption(meta, value) {
         max,
         startAngle: 210,
         endAngle: -30,
-        radius: '95%',
-        center: ['50%', '60%'],
+        radius: '85%',
+        center: ['50%', '58%'],
         splitNumber: 12,
         progress: { show: true, width: 14, roundCap: true },
         axisLine: { lineStyle: { width: 14, color: seg } },
-        axisTick: { distance: -26, length: 7, lineStyle: { color: '#909399', width: 1.5 } },
+        axisTick: { distance: -22, length: 7, lineStyle: { color: '#909399', width: 1.5 } },
         splitLine: {
-          distance: -30,
+          distance: -26,
           length: 14,
           lineStyle: { color: '#909399', width: 1.5 }
         },
         axisLabel: {
-          distance: -42,
+          distance: -36,
           fontSize: 13,
           color: '#666',
           formatter: (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : v.toFixed(1))
@@ -422,7 +422,7 @@ function buildGaugeOption(meta, value) {
         pointer: { width: 5, length: '60%' },
         anchor: { show: true, size: 9, itemStyle: { color: '#909399' } },
         title: {
-          offsetCenter: [0, '82%'],
+          offsetCenter: [0, '85%'],
           fontSize: 13,
           color: '#555'
         },
@@ -432,7 +432,7 @@ function buildGaugeOption(meta, value) {
           fontSize: 20,
           fontWeight: 500,
           color: value == null ? '#bbb' : (value > (tMax ?? Infinity) || value < (tMin ?? -Infinity) ? '#F56C6C' : '#303133'),
-          offsetCenter: [0, '58%']
+          offsetCenter: [0, '60%']
         },
         data: [{ value: value ?? min, name: `${meta?.name || code}${unit ? ' (' + unit + ')' : ''}` }]
       }
@@ -532,6 +532,6 @@ onUnmounted(() => {
 }
 .gauge-box {
   width: 100%;
-  height: 240px;
+  height: 300px;
 }
 </style>
