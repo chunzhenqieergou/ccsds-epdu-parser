@@ -218,7 +218,7 @@ let timeTimer = null
 async function fetchTime() {
   try {
     const data = await timeApi.current()
-    serverTime.value = dayjs(data?.current_time || data?.time || data).format('YYYY-MM-DD HH:mm:ss')
+    serverTime.value = dayjs(data?.server_time || data?.current_time || data?.time).format('YYYY-MM-DD HH:mm:ss')
   } catch {
     serverTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
   }
