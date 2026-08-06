@@ -404,12 +404,21 @@ function buildGaugeOption(meta, value) {
         endAngle: -30,
         radius: '95%',
         center: ['50%', '60%'],
-        splitNumber: 8,
+        splitNumber: 12,
         progress: { show: true, width: 14, roundCap: true },
         axisLine: { lineStyle: { width: 14, color: seg } },
-        axisTick: { distance: -24, length: 4 },
-        splitLine: { distance: -26, length: 10 },
-        axisLabel: { distance: -34, fontSize: 10, color: '#999' },
+        axisTick: { distance: -26, length: 7, lineStyle: { color: '#909399', width: 1.5 } },
+        splitLine: {
+          distance: -30,
+          length: 14,
+          lineStyle: { color: '#909399', width: 1.5 }
+        },
+        axisLabel: {
+          distance: -42,
+          fontSize: 13,
+          color: '#666',
+          formatter: (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : v.toFixed(1))
+        },
         pointer: { width: 5, length: '60%' },
         anchor: { show: true, size: 9, itemStyle: { color: '#909399' } },
         title: {
