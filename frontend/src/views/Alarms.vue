@@ -16,8 +16,8 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="filterStatus" placeholder="全部状态" clearable style="width: 140px" @change="fetchAlarms">
-            <el-option label="未处理" value="pending" />
-            <el-option label="已处理" value="handled" />
+            <el-option label="未处理" value="0" />
+            <el-option label="已处理" value="1" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -44,8 +44,8 @@
         <el-table-column prop="threshold" label="阈值" width="100" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'handled' ? 'success' : 'danger'" size="small">
-              {{ row.status === 'handled' ? '已处理' : '未处理' }}
+            <el-tag :type="Number(row.status) === 1 ? 'success' : 'danger'" size="small">
+              {{ Number(row.status) === 1 ? '已处理' : '未处理' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -58,7 +58,7 @@
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="row.status !== 'handled'"
+              v-if="Number(row.status) !== 1"
               type="primary"
               size="small"
               @click="openHandleDialog(row)"
@@ -133,9 +133,9 @@ const handleForm = reactive({ remark: '' })
 const sortedAlarms = computed(() => {
   const list = [...alarms.value]
   list.sort((a, b) => {
-    if ((a.status !== 'handled') && (b.status === 'handled')) return -1
-    if ((a.status === 'handled') && (b.status !== 'handled')) return 1
-    return 0
+    const sa = Number(a.status) === 1 ? 1 : 0
+    const sb = Number(b.status) === 1 ? 1 : 0
+    return sa - sb
   })
   return list
 })
@@ -181,8 +181,8 @@ async function doHandle() {
   handleLoading.value = true
   try {
     await alarmApi.handle(currentAlarm.value.id, {
-      remark: handleForm.remark,
-      handler: auth.user?.username || 'unknown'
+      status: 1,
+      note: handleForm.remark
     })
     ElMessage.success('告警已处理')
     handleDialogVisible.value = false

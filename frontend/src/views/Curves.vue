@@ -105,9 +105,10 @@ const {
   getInstance: getHistoryInstance
 } = useEcharts(historyChartRef)
 
-const MAX_POINTS = 300
-const realtimeSeriesData = ref({})
-let pollTimer = null
+const MAX_POINTS = 600               // 单参数最多保留的点数
+const realtimeSeriesMap = ref({})    // { [param_code]: Map<tsMs, value> }
+let lastCursorMs = 0                 // 已经收到过的最大 ts（毫秒），用于增量拉取
+let pollTimer = null                 // 轮询定时器句柄
 let seriesColors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc']
 
 async function fetchParams() {
@@ -117,75 +118,118 @@ async function fetchParams() {
   } catch {}
 }
 
+// ISO / 数字 / Date 等统一为毫秒数；ECharts time 轴只认数字
+function tsToMs(ts) {
+  if (ts == null || ts === '') return Date.now()
+  if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts
+  const d = new Date(String(ts).replace(' ', 'T'))
+  return isNaN(d.getTime()) ? Date.now() : d.getTime()
+}
+
 function onParamsChange() {
   if (activeTab.value === 'realtime') {
+    // 切换参数时清空数据和游标，避免残留
+    realtimeSeriesMap.value = {}
+    lastCursorMs = 0
     initRealtimeChart()
     startPolling()
   }
 }
 
 function buildRealtimeOption() {
-  const series = selectedParams.value.map((code, i) => ({
-    name: code,
-    type: 'line',
-    data: realtimeSeriesData.value[code] || [],
-    smooth: true,
-    showSymbol: false,
-    lineStyle: { width: 2 },
-    itemStyle: { color: seriesColors[i % seriesColors.length] }
-  }))
+  const codes = selectedParams.value
+  const series = codes.map((code, i) => {
+    const map = realtimeSeriesMap.value[code]
+    const arr = map
+      ? [...map.entries()].sort((a, b) => a[0] - b[0]).map(([t, v]) => [t, Number(v)])
+      : []
+    return {
+      name: code,
+      type: 'line',
+      data: arr,
+      smooth: arr.length >= 20,         // 点太少时不平滑，避免出现诡异弧线
+      showSymbol: arr.length <= 60,    // 稀疏时显示圆点
+      sampling: arr.length > 200 ? 'lttb' : false, // 点很多时降采样，曲线更平滑
+      connectNulls: false,
+      lineStyle: { width: 2 },
+      itemStyle: { color: seriesColors[i % seriesColors.length] }
+    }
+  })
   return {
-    tooltip: { trigger: 'axis', formatter: (params) => {
-      let html = dayjs(params[0].axisValue).format('HH:mm:ss') + '<br/>'
-      params.forEach(p => { html += `${p.marker}${p.seriesName}: ${p.value}<br/>` })
-      return html
-    }},
-    legend: { data: selectedParams.value, bottom: 0 },
-    grid: { left: 60, right: 30, top: 30, bottom: 50 },
-    xAxis: { type: 'time', axisLabel: { formatter: (v) => dayjs(v).format('HH:mm:ss') } },
-    yAxis: { type: 'value', name: '数值', splitLine: { lineStyle: { type: 'dashed' } } },
+    tooltip: { trigger: 'axis' },
+    legend: { data: codes, bottom: 4 },
+    grid: { left: 60, right: 24, top: 28, bottom: 64 },
+    xAxis: {
+      type: 'time',
+      axisLabel: { formatter: (v) => dayjs(v).format('HH:mm:ss') }
+    },
+    yAxis: {
+      type: 'value',
+      name: '数值',
+      scale: true,
+      splitLine: { lineStyle: { type: 'dashed' } }
+    },
     dataZoom: [
-      { type: 'inside', start: 0, end: 100 },
-      { type: 'slider', start: 0, end: 100, height: 20, bottom: 22 }
+      { type: 'inside' },
+      { type: 'slider', height: 18, bottom: 24 }
     ],
     series
   }
 }
 
 function initRealtimeChart() {
-  selectedParams.value.forEach(code => {
-    if (!realtimeSeriesData.value[code]) {
-      realtimeSeriesData.value[code] = []
+  // 确保每个被选中的参数都有一个 Map
+  selectedParams.value.forEach((code) => {
+    if (!realtimeSeriesMap.value[code]) {
+      realtimeSeriesMap.value[code] = new Map()
     }
   })
-  const option = buildRealtimeOption()
-  setRealtimeOption(option, true)
+  // 始终 notMerge=true，避免 dataZoom / tooltip 等配置叠加错位
+  setRealtimeOption(buildRealtimeOption(), true)
   realtimeReady.value = selectedParams.value.length > 0
 }
 
 async function pollLatest() {
   if (!selectedParams.value.length) return
   try {
-    const now = dayjs().format('YYYY-MM-DD HH:mm:ss')
-    const twoMinAgo = dayjs().subtract(2, 'minute').format('YYYY-MM-DD HH:mm:ss')
+    const nowMs = Date.now()
+    // 首次进入给 5 秒缓冲，避免首轮游标挡住已有数据
+    const cursor = lastCursorMs || (nowMs - 5000)
     const data = await telemetryApi.query({
       param_codes: selectedParams.value,
-      start: twoMinAgo,
-      end: now
+      start: dayjs(cursor).format('YYYY-MM-DD HH:mm:ss'),
+      end: dayjs(nowMs).format('YYYY-MM-DD HH:mm:ss'),
+      page_size: 1000
     })
-    const items = Array.isArray(data) ? data : (data.points || data.items || data.records || [])
-    if (items.length) {
-      items.forEach(item => {
-        const code = item.param_code
-        if (!realtimeSeriesData.value[code]) realtimeSeriesData.value[code] = []
-        const ts = item.ts || item.timestamp || item.time || item.created_at || now
-        realtimeSeriesData.value[code].push([ts, Number(item.value)])
-        if (realtimeSeriesData.value[code].length > MAX_POINTS) {
-          realtimeSeriesData.value[code].shift()
-        }
-      })
-      setRealtimeOption(buildRealtimeOption(), false)
+    const items = Array.isArray(data)
+      ? data
+      : (data.points || data.items || data.records || [])
+
+    let touched = false
+    for (const item of items) {
+      const code = item.param_code
+      if (!code) continue
+      if (!realtimeSeriesMap.value[code]) {
+        realtimeSeriesMap.value[code] = new Map()
+      }
+      const ms = tsToMs(item.ts || item.timestamp || item.time || item.created_at)
+      // 游标过滤 + Map 去重：同一 ts 多次到达只保留最新
+      if (ms <= cursor) continue
+      if (realtimeSeriesMap.value[code].get(ms) !== undefined) continue
+
+      realtimeSeriesMap.value[code].set(ms, Number(item.value))
+      if (ms > lastCursorMs) lastCursorMs = ms
+      touched = true
+
+      // 超过上限时丢弃最早的数据
+      const m = realtimeSeriesMap.value[code]
+      if (m.size > MAX_POINTS) {
+        const keys = [...m.keys()].sort((a, b) => a - b)
+        const drop = keys.length - MAX_POINTS
+        for (let k = 0; k < drop; k++) m.delete(keys[k])
+      }
     }
+    if (touched) setRealtimeOption(buildRealtimeOption(), true)
     realtimeConnected.value = true
   } catch {
     realtimeConnected.value = false
@@ -216,7 +260,10 @@ async function queryHistory() {
     const data = await telemetryApi.query({
       param_codes: historyParams.value,
       start,
-      end
+      end,
+      sampling: 'auto',
+      page_size: 1000,
+      max_points: 3000
     })
     const items = Array.isArray(data) ? data : (data.points || data.items || data.records || [])
     const seriesMap = {}

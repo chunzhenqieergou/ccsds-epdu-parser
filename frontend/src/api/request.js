@@ -4,9 +4,23 @@ import { ElMessage } from 'element-plus'
 const http = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
-  headers: { 'Content-Type': 'application/json' }
+  headers: { 'Content-Type': 'application/json' },
+  paramsSerializer: {
+    serialize(params) {
+      const sp = new URLSearchParams()
+      Object.entries(params).forEach(([key, value]) => {
+        if (value === undefined || value === null) return
+        if (Array.isArray(value)) {
+          // 后端约定: param_codes 等数组参数用逗号分隔的字符串
+          sp.append(key, value.join(','))
+        } else {
+          sp.append(key, value)
+        }
+      })
+      return sp.toString()
+    }
+  }
 })
-
 let isRefreshing = false
 let refreshSubscribers = []
 

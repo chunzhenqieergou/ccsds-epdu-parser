@@ -143,7 +143,9 @@ async function fetchStats() {
     }
     if (alarmStats.status === 'fulfilled') {
       const d = alarmStats.value
-      stats.pendingAlarms = d.pending || d.unhandled || d.pending_count || 0
+      // 兼容多种返回结构：优先 pending / unhandled / pending_count，回退 by_status.status_0
+      stats.pendingAlarms = d.pending ?? d.unhandled ?? d.pending_count
+        ?? d.by_status?.status_0 ?? 0
     }
   } catch {}
 }

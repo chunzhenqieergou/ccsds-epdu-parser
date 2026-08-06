@@ -70,6 +70,9 @@ def _alarm_stats(db: Session) -> dict:
 
     return {
         "total": total,
+        # 语义化字段：0=未处理 1=已处理（前端看板统计依赖）
+        "pending": by_status.get("status_0", 0),
+        "handled": by_status.get("status_1", 0),
         "by_status": by_status,
         "by_level": by_level,
     }
