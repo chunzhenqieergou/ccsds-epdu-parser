@@ -21,7 +21,7 @@
             <el-option
               v-for="p in paramList"
               :key="p.id"
-              :label="p.param_code + ' (' + (p.param_name || p.param_code) + ')'"
+              :label="p.param_code + ' (' + (p.name || p.param_code) + ')'"
               :value="p.param_code"
             />
           </el-select>
@@ -46,7 +46,7 @@
             <el-option
               v-for="p in paramList"
               :key="p.id"
-              :label="p.param_code + ' (' + (p.param_name || p.param_code) + ')'"
+              :label="p.param_code + ' (' + (p.name || p.param_code) + ')'"
               :value="p.param_code"
             />
           </el-select>
@@ -112,7 +112,7 @@ let seriesColors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba
 
 async function fetchParams() {
   try {
-    const data = await paramApi.list({ limit: 200 })
+    const data = await paramApi.list({ page: 1, page_size: 100 })
     paramList.value = Array.isArray(data) ? data : (data.items || [])
   } catch {}
 }
@@ -173,12 +173,12 @@ async function pollLatest() {
       start: twoMinAgo,
       end: now
     })
-    const items = Array.isArray(data) ? data : (data.items || data.records || [])
+    const items = Array.isArray(data) ? data : (data.points || data.items || data.records || [])
     if (items.length) {
       items.forEach(item => {
         const code = item.param_code
         if (!realtimeSeriesData.value[code]) realtimeSeriesData.value[code] = []
-        const ts = item.timestamp || item.time || item.created_at || now
+        const ts = item.ts || item.timestamp || item.time || item.created_at || now
         realtimeSeriesData.value[code].push([ts, Number(item.value)])
         if (realtimeSeriesData.value[code].length > MAX_POINTS) {
           realtimeSeriesData.value[code].shift()
@@ -218,13 +218,13 @@ async function queryHistory() {
       start,
       end
     })
-    const items = Array.isArray(data) ? data : (data.items || data.records || [])
+    const items = Array.isArray(data) ? data : (data.points || data.items || data.records || [])
     const seriesMap = {}
     historyParams.value.forEach(code => { seriesMap[code] = [] })
     items.forEach(item => {
       const code = item.param_code
       if (seriesMap[code]) {
-        const ts = item.timestamp || item.time || item.created_at
+        const ts = item.ts || item.timestamp || item.time || item.created_at
         seriesMap[code].push([ts, Number(item.value)])
       }
     })
