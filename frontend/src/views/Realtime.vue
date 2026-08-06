@@ -57,7 +57,37 @@
           @check="onTreeCheck"
           default-expand-all
           size="small"
-        />
+          class="param-tree"
+        >
+          <template #default="{ data }">
+            <div class="tree-node">
+              <template v-if="data.type === 'group'">
+                <span class="node-group-label">{{ data.label }}</span>
+                <el-tag
+                  v-if="data.alarmedCount > 0"
+                  type="danger"
+                  size="small"
+                  class="node-badge"
+                >{{ data.alarmedCount }} 告警</el-tag>
+                <el-tag type="info" size="small" class="node-badge">{{ data.total }} 项</el-tag>
+              </template>
+              <template v-else>
+                <span
+                  class="node-name"
+                  :title="paramTip(data)"
+                >{{ data.name || data.code }}</span>
+                <span class="node-code">{{ data.code }}</span>
+                <span class="node-value" :class="{ 'alarm-value': isAlarmed(data.code) }">
+                  <template v-if="latestOf(data.code)">
+                    {{ displayMode === 'value' ? latestOf(data.code).value : latestOf(data.code).raw_value }}
+                    <span v-if="displayMode === 'value' && data.unit" class="unit">{{ data.unit }}</span>
+                  </template>
+                  <span v-else>-</span>
+                </span>
+              </template>
+            </div>
+          </template>
+        </el-tree>
       </div>
 
       <div class="table-panel">
@@ -170,18 +200,27 @@ const paramTree = computed(() => {
     const code = p.code || p.param_code
     const subsystem = p.subsystem || p.subsystem_name || p.group || '未分组'
     if (!groups[subsystem]) {
-      groups[subsystem] = { id: subsystem, label: subsystem, children: [] }
+      groups[subsystem] = { id: subsystem, label: subsystem, type: 'group', children: [] }
     }
     groups[subsystem].children.push({
       id: code,
       code: code,
+      type: 'param',
       label: `${code} - ${p.name || code}`,
       name: p.name || code,
       unit: p.unit || '',
+      description: p.description || '',
+      data_type: p.data_type || 'float',
+      threshold_min: p.threshold_min ?? null,
+      threshold_max: p.threshold_max ?? null,
       subsystem: subsystem
     })
   })
-  return Object.values(groups)
+  return Object.values(groups).map((g) => {
+    g.total = g.children.length
+    g.alarmedCount = g.children.filter((c) => !!store.alarmedParams[c.code]).length
+    return g
+  })
 })
 
 const filteredParamTree = computed(() => {
@@ -196,6 +235,26 @@ const filteredParamTree = computed(() => {
     }))
     .filter((g) => g.children && g.children.length > 0)
 })
+
+function latestOf(code) {
+  return store.latestValues[code] || null
+}
+
+function isAlarmed(code) {
+  return !!store.alarmedParams[code]
+}
+
+function paramTip(node) {
+  const parts = [
+    node.name,
+    node.description ? `描述: ${node.description}` : '',
+    `类型: ${node.data_type}`,
+    node.unit ? `单位: ${node.unit}` : '',
+    `阈值: ${node.threshold_min ?? '-'} ~ ${node.threshold_max ?? '-'}`,
+    `分系统: ${node.subsystem}`
+  ]
+  return parts.filter(Boolean).join('\n')
+}
 
 const tableData = computed(() => {
   return selectedParamCodes.value
@@ -380,8 +439,8 @@ onBeforeUnmount(() => {
 }
 
 .tree-panel {
-  width: 280px;
-  min-width: 280px;
+  width: 340px;
+  min-width: 340px;
   background: #fff;
   border-radius: 6px;
   padding: 12px;
@@ -398,6 +457,65 @@ onBeforeUnmount(() => {
 .tree-panel :deep(.el-tree) {
   flex: 1;
   overflow-y: auto;
+}
+
+.tree-panel :deep(.el-tree-node__content) {
+  height: 28px;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding-right: 6px;
+  font-size: 12px;
+}
+
+.node-group-label {
+  font-weight: 500;
+  color: #1a1a2e;
+}
+
+.node-badge {
+  margin-left: 6px;
+}
+
+.node-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #333;
+}
+
+.node-code {
+  color: #aaa;
+  font-size: 11px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.node-value {
+  margin-left: auto;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: #1a1a2e;
+  padding-left: 8px;
+  flex-shrink: 0;
+}
+
+.node-value .unit {
+  color: #999;
+  font-weight: 400;
+  margin-left: 2px;
+  font-size: 11px;
+}
+
+.alarm-value {
+  color: #f56c6c;
+  font-weight: 700;
 }
 
 .table-panel {
