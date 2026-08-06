@@ -63,6 +63,16 @@ http.interceptors.response.use(
 
     const { status, config } = error.response
 
+    // 登录失败（用户名/密码错误等）：不触发 token 刷新或跳转，直接提示后端返回的错误
+    if (status === 401 && config.url && config.url.includes('/auth/login')) {
+      const msg =
+        error.response.data?.detail ||
+        error.response.data?.message ||
+        '用户名或密码错误'
+      ElMessage.error(msg)
+      return Promise.reject(error)
+    }
+
     if (status === 401 && !config._retry) {
       const refreshToken = localStorage.getItem('stms_refresh_token')
       if (!refreshToken) {
@@ -101,7 +111,10 @@ http.interceptors.response.use(
     }
 
     if (status !== 401) {
-      const msg = error.response.data?.message || `服务器错误 (${status})`
+      const msg =
+        error.response.data?.detail ||
+        error.response.data?.message ||
+        `服务器错误 (${status})`
       ElMessage.error(msg)
     }
 
