@@ -270,37 +270,6 @@ class ChannelOut(ChannelBase):
 
 
 # ---------------------------------------------------------------------------
-# 指令
-# ---------------------------------------------------------------------------
-class RemoteCommandBase(BaseModel):
-    satellite_id: int
-    cmd_code: str = Field(max_length=32, pattern="^[A-Z0-9_]+$")
-    name: str = Field(max_length=128)
-    params_json: Optional[str] = None
-    forbidden: int = 0
-    permission_level: int = 0
-    description: Optional[str] = Field(default=None, max_length=255)
-
-
-class RemoteCommandCreate(RemoteCommandBase):
-    pass
-
-
-class RemoteCommandUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=128)
-    params_json: Optional[str] = None
-    forbidden: Optional[int] = Field(default=None, ge=0, le=1)
-    permission_level: Optional[int] = Field(default=None, ge=0, le=2)
-    description: Optional[str] = Field(default=None, max_length=255)
-
-
-class RemoteCommandOut(RemoteCommandBase):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    satellite_name: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
 # 遥测数据 / 实时
 # ---------------------------------------------------------------------------
 class TelemetryPoint(BaseModel):

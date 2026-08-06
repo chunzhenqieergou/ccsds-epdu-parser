@@ -82,12 +82,6 @@ const router = createRouter({
           meta: { title: '通道配置', parent: 'satellites' }
         },
         {
-          path: 'satellites/commands',
-          name: 'SatelliteCommands',
-          component: () => import('../views/satellites/Commands.vue'),
-          meta: { title: '指令管理', parent: 'satellites' }
-        },
-        {
           path: 'system/users',
           name: 'SystemUsers',
           component: () => import('../views/system/Users.vue'),

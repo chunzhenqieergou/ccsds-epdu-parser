@@ -1,7 +1,7 @@
 """
 种子数据初始化脚本
 ===================
-幂等运行：建表、创建默认用户、示例卫星/参数/通道/指令。
+幂等运行：建表、创建默认用户、示例卫星/参数/通道。
 用法: python scripts/seed.py（在 backend 目录下执行）
 """
 import sys
@@ -59,7 +59,7 @@ def seed_users(db: SessionLocal) -> None:
 
 
 def seed_satellite(db: SessionLocal) -> None:
-    """创建示例卫星、通道、遥测参数、遥控指令（按 code 判重）"""
+    """创建示例卫星、通道、遥测参数（按 code 判重）"""
     # --- 卫星 ---
     sat = db.query(models.Satellite).filter(
         models.Satellite.code == "TZ-1"
@@ -215,38 +215,6 @@ def seed_satellite(db: SessionLocal) -> None:
         param_count += 1
     db.commit()
     print(f"  遥测参数: 新增 {param_count} 条（覆盖 {len(params_data)} 个）")
-
-    # --- 遥控指令（含 1 条 forbidden=1 危险指令） ---
-    commands_data = [
-        {"cmd_code": "PWR_ON", "name": "开机指令",
-         "forbidden": 0, "permission_level": 1,
-         "params_json": '{"target": "main_power"}'},
-        {"cmd_code": "PWR_OFF", "name": "断电指令",
-         "forbidden": 1, "permission_level": 2,
-         "params_json": '{"target": "main_power"}'},
-        {"cmd_code": "MODE_NORMAL", "name": "正常模式",
-         "forbidden": 0, "permission_level": 1,
-         "params_json": '{"mode": "normal"}'},
-        {"cmd_code": "MODE_SAFE", "name": "安全模式",
-         "forbidden": 0, "permission_level": 1,
-         "params_json": '{"mode": "safe"}'},
-        {"cmd_code": "RESET", "name": "系统复位",
-         "forbidden": 0, "permission_level": 2,
-         "params_json": '{"target": "system"}'},
-    ]
-    cmd_count = 0
-    for cd in commands_data:
-        existing = db.query(models.RemoteCommand).filter(
-            models.RemoteCommand.satellite_id == sat.id,
-            models.RemoteCommand.cmd_code == cd["cmd_code"],
-        ).first()
-        if existing:
-            continue
-        cd["satellite_id"] = sat.id
-        db.add(models.RemoteCommand(**cd))
-        cmd_count += 1
-    db.commit()
-    print(f"  遥控指令: 新增 {cmd_count} 条（含 1 条危险指令 PWR_OFF）")
 
 
 def main() -> None:

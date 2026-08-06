@@ -59,7 +59,6 @@
           <el-menu-item index="/satellites/list">卫星管理</el-menu-item>
           <el-menu-item index="/satellites/params">参数配置</el-menu-item>
           <el-menu-item index="/satellites/channels">通道配置</el-menu-item>
-          <el-menu-item index="/satellites/commands">指令管理</el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu v-if="auth.role === 'admin'" index="system">

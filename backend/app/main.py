@@ -60,7 +60,6 @@ from .api import (  # noqa: E402
     satellites,
     params,
     channels,
-    commands,
     telemetry,
     statistics,
     alarms,
@@ -74,7 +73,6 @@ app.include_router(auth.router, prefix=f"{API_PREFIX}/auth", tags=["认证"])
 app.include_router(satellites.router, prefix=f"{API_PREFIX}/satellites", tags=["卫星配置"])
 app.include_router(params.router, prefix=f"{API_PREFIX}/params", tags=["遥测参数"])
 app.include_router(channels.router, prefix=f"{API_PREFIX}/channels", tags=["通道配置"])
-app.include_router(commands.router, prefix=f"{API_PREFIX}/commands", tags=["遥控指令"])
 app.include_router(telemetry.router, prefix=f"{API_PREFIX}/telemetry", tags=["遥测数据"])
 app.include_router(statistics.router, prefix=f"{API_PREFIX}/statistics", tags=["统计分析"])
 app.include_router(alarms.router, prefix=f"{API_PREFIX}/alarms", tags=["告警"])
@@ -90,4 +88,3 @@ def health():
 @app.get("/")
 def root():
     return {"code": 0, "message": settings.APP_NAME, "data": {"docs": "/docs"}}
-

@@ -35,12 +35,3 @@ export const channelApi = {
   start: (id) => http.post(`/channels/${id}/start`).then((r) => r.data),
   stop: (id) => http.post(`/channels/${id}/stop`).then((r) => r.data)
 }
-
-export const commandApi = {
-  list: (params) => http.get('/commands', { params }).then((r) => r.data),
-  get: (id) => http.get(`/commands/${id}`).then((r) => r.data),
-  create: (data) => http.post('/commands', data).then((r) => r.data),
-  update: (id, data) => http.put(`/commands/${id}`, data).then((r) => r.data),
-  remove: (id) => http.delete(`/commands/${id}`).then((r) => r.data),
-  send: (id, params) => http.post(`/commands/${id}/send`, params).then((r) => r.data)
-}

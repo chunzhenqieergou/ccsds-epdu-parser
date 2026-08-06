@@ -130,45 +130,86 @@ class RealFrameReceiver:
             self._start_serial()
 
     def _start_serial(self) -> None:
-        """启动串口 RS422 接收（无串口/未装 pyserial 时仅警告，不阻塞启动）。"""
+        """启动串口 RS422 接收线程（无串口/设备未上线时自动重试，不阻塞启动）。"""
         try:
             import serial  # noqa: F401
         except ImportError:
             logger.warning("pyserial 未安装，串口 RS422 接收不可用")
             return
-        port: str = settings.RECEIVER_SERIAL_PORT
-        try:
-            self._serial = serial.Serial(port, settings.RECEIVER_SERIAL_BAUD, timeout=0.2)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "无法打开串口 %s: %s（可安装虚拟串口 com0com 后启用）", port, e
-            )
+        if self._serial_thread is not None:
             return
         self._serial_thread = threading.Thread(
             target=self._serial_loop, daemon=True, name="real-receiver-serial"
         )
         self._serial_thread.start()
-        logger.info("串口 RS422 接收已启动 %s @ %d baud", port, settings.RECEIVER_SERIAL_BAUD)
+        logger.info("串口 RS422 接收线程已启动，端口 %s", settings.RECEIVER_SERIAL_PORT)
 
     def _serial_loop(self) -> None:
-        """串口循环：逐字节喂 Rs422Parser 状态机组帧，完整帧进入真实接收队列。"""
-        parser: Rs422Parser = Rs422Parser()
+        """串口循环：打开串口（支持 COM3 / socket:// 等 pyserial URL），逐字节组帧入队。
+
+        设备未就绪时每 3 秒重试一次，断线后自动重连；不阻塞系统其它功能。
+        """
+        import serial as serial_mod
+
+        port: str = settings.RECEIVER_SERIAL_PORT
+        retry_warned: bool = False
         while self._running:
-            try:
-                if self._serial is None:
-                    break
-                n: int = self._serial.in_waiting
-                if n <= 0:
-                    time.sleep(0.05)
+            if self._serial is None:
+                try:
+                    self._serial = serial_mod.serial_for_url(
+                        port,
+                        baudrate=settings.RECEIVER_SERIAL_BAUD,
+                        timeout=0.2,
+                    )
+                    logger.info(
+                        "串口 RS422 接收已启动 %s @ %d baud",
+                        port,
+                        settings.RECEIVER_SERIAL_BAUD,
+                    )
+                    retry_warned = False
+                except Exception as e:  # noqa: BLE001
+                    if not retry_warned:
+                        logger.warning(
+                            "无法打开串口 %s: %s（每 3 秒自动重试）", port, e
+                        )
+                        retry_warned = True
+                    time.sleep(3)
                     continue
-                chunk: bytes = self._serial.read(n)
-                for b in chunk:
-                    result = parser.feed(b)
-                    if result and result.get("raw_bytes"):
-                        self._push("RS422", result["raw_bytes"])
+
+            parser: Rs422Parser = Rs422Parser()
+            try:
+                while self._running:
+                    n: int = self._serial.in_waiting
+                    if n <= 0:
+                        time.sleep(0.05)
+                        continue
+                    # socket:// 等 URL 实现的 in_waiting 只表示“是否有数据”，
+                    # 因此按 256 字节批量读取（一次可取回多帧，避免逐字节丢帧）
+                    chunk: bytes = self._serial.read(256)
+                    if not chunk:
+                        continue
+                    for b in chunk:
+                        result = parser.feed(b)
+                        if result and result.get("raw_bytes"):
+                            logger.info(
+                                "串口收到 RS422 帧: satellite_id=%s, crc_ok=%s",
+                                result.get("satellite_id"),
+                                result.get("crc_ok"),
+                            )
+                            self._push("RS422", result["raw_bytes"])
+            except serial_mod.SerialException as e:
+                logger.warning("串口连接已断开: %s（3 秒后尝试重连）", e)
             except Exception:  # noqa: BLE001
-                logger.exception("串口读取异常")
-                time.sleep(1)
+                logger.exception("串口读取异常，3 秒后尝试重连")
+            finally:
+                try:
+                    if self._serial is not None:
+                        self._serial.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._serial = None
+            if self._running:
+                time.sleep(3)
 
     def stop(self) -> None:
         """停止接收线程。"""

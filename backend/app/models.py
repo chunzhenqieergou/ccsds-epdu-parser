@@ -7,7 +7,6 @@ STMS 数据库 ORM 模型
   users               用户表（含角色）
   satellites          卫星表
   telemetry_params    遥测参数表（含转换公式、告警阈值）
-  remote_commands     遥控指令表
   channels            数据接收通道表
   telemetry_data      遥测时序数据表（原方案用 TDengine/MongoDB，因环境限制统一存 MySQL）
   telemetry_frames    遥测原始帧表（整帧十六进制源码，用于「整帧显示」）
@@ -81,8 +80,6 @@ class Satellite(Base):
                                                           cascade="all, delete-orphan")
     channels: Mapped[list["Channel"]] = relationship(back_populates="satellite",
                                                      cascade="all, delete-orphan")
-    commands: Mapped[list["RemoteCommand"]] = relationship(back_populates="satellite",
-                                                           cascade="all, delete-orphan")
 
 
 class TelemetryParam(Base):
@@ -130,22 +127,6 @@ class Channel(Base):
     remark: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     satellite: Mapped["Satellite"] = relationship(back_populates="channels")
-
-
-class RemoteCommand(Base):
-    """遥控指令表"""
-    __tablename__ = "remote_commands"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    satellite_id: Mapped[int] = mapped_column(ForeignKey("satellites.id"), index=True, nullable=False)
-    cmd_code: Mapped[str] = mapped_column(String(32), nullable=False, comment="指令代号")
-    name: Mapped[str] = mapped_column(String(128), nullable=False, comment="指令名称")
-    params_json: Mapped[str | None] = mapped_column(Text, nullable=True, comment="参数模板(JSON)")
-    forbidden: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="1=禁止发送(危险指令)")
-    permission_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0,
-                                        comment="所需权限等级 0=观察员 1=操作员 2=管理员")
-
-    satellite: Mapped["Satellite"] = relationship(back_populates="commands")
 
 
 class TelemetryData(Base):

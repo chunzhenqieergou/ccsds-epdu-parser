@@ -139,7 +139,7 @@ def delete_satellite(
     current_user: models.User = Depends(require_operator),
     request: Request = None,
 ):
-    """删除卫星（级联删除参数/通道/指令）"""
+    """删除卫星（级联删除参数/通道）"""
     sat = db.query(models.Satellite).filter(
         models.Satellite.id == satellite_id
     ).first()
