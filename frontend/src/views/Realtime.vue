@@ -408,7 +408,7 @@ function formatFrameHex(frame) {
 }
 
 async function parseSelectedFrame() {
-  const frame = store.recentFrames[selectedFrameIndex]
+  const frame = store.recentFrames[selectedFrameIndex.value]
   if (!frame) return
   const rawHex = frame.raw_hex || frame.hex || frame.rawHex || frame.data
   if (!rawHex) {
