@@ -214,11 +214,21 @@ const greeting = computed(() => {
 })
 
 let timeTimer = null
+let tickTimer = null
+let serverOffset = 0 // 服务器时间 - 本地时间（毫秒）
+
+function tick() {
+  serverTime.value = dayjs(Date.now() + serverOffset).format('YYYY-MM-DD HH:mm:ss')
+}
 
 async function fetchTime() {
   try {
     const data = await timeApi.current()
-    serverTime.value = dayjs(data?.server_time || data?.current_time || data?.time).format('YYYY-MM-DD HH:mm:ss')
+    const serverTs = dayjs(data?.server_time || data?.current_time || data?.time).valueOf()
+    if (serverTs) {
+      serverOffset = serverTs - Date.now()
+    }
+    tick()
   } catch {
     serverTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
   }
@@ -255,11 +265,13 @@ async function fetchStats() {
 onMounted(() => {
   fetchTime()
   fetchStats()
+  tickTimer = setInterval(tick, 1000)
   timeTimer = setInterval(fetchTime, 30000)
 })
 
 onUnmounted(() => {
   if (timeTimer) clearInterval(timeTimer)
+  if (tickTimer) clearInterval(tickTimer)
 })
 </script>
 
