@@ -19,6 +19,7 @@ from ..deps import get_current_user, get_db
 from ..database import get_db as _get_db
 from ..security import get_token_subject
 from ..services.sse import event_stream_generator, sse_subscribe
+from ..tsdb import get_tsdb_store
 
 router = APIRouter()
 
@@ -103,34 +104,26 @@ def query_telemetry(
     end_dt = _parse_datetime(end, "end")
     codes = _split_codes(param_codes)
 
-    q = db.query(models.TelemetryData)
-    if satellite_id:
-        q = q.filter(models.TelemetryData.satellite_id == satellite_id)
-    if channel_id:
-        q = q.filter(models.TelemetryData.channel_id == channel_id)
-    if codes:
-        q = q.filter(models.TelemetryData.param_code.in_(codes))
-    if start_dt:
-        q = q.filter(models.TelemetryData.ts >= start_dt)
-    if end_dt:
-        q = q.filter(models.TelemetryData.ts <= end_dt)
-
-    total = q.count()
+    tsdb = get_tsdb_store()
+    ch_ids: Optional[list[int]] = [channel_id] if channel_id else None
 
     # 自动抽样模式：全量查询 → 按参数分组降采样
-    if sampling == "auto" and total > max_points:
-        all_data = q.order_by(models.TelemetryData.ts.asc()).all()
+    if sampling == "auto":
+        all_data = tsdb.query_all(
+            satellite_id=satellite_id, param_codes=codes, channel_ids=ch_ids,
+            start_dt=start_dt, end_dt=end_dt,
+        )
         sampled = _downsample_per_param(all_data, max_points)
         return schemas.ok({
-            "total": total,
+            "total": len(all_data),
             "points": [_point_dict(d) for d in sampled],
         })
 
     # 普通分页模式
-    rows = q.order_by(models.TelemetryData.ts.asc()) \
-             .offset((page - 1) * page_size) \
-             .limit(page_size) \
-             .all()
+    total, rows = tsdb.query(
+        satellite_id=satellite_id, param_codes=codes, channel_ids=ch_ids,
+        start_dt=start_dt, end_dt=end_dt, page=page, page_size=page_size,
+    )
 
     return schemas.ok({
         "total": total,
@@ -153,25 +146,8 @@ def latest_values(
     """获取每个参数的最新值（每个 param_code 取最新一条）"""
     codes = _split_codes(param_codes)
 
-    # 子查询：每个 param_code 的 max ts
-    subq = db.query(
-        models.TelemetryData.param_code,
-        func.max(models.TelemetryData.ts).label("max_ts"),
-    )
-    if satellite_id:
-        subq = subq.filter(models.TelemetryData.satellite_id == satellite_id)
-    if codes:
-        subq = subq.filter(models.TelemetryData.param_code.in_(codes))
-    subq = subq.group_by(models.TelemetryData.param_code).subquery()
-
-    # JOIN 回主表获取完整记录
-    rows = db.query(models.TelemetryData).join(
-        subq,
-        and_(
-            models.TelemetryData.param_code == subq.c.param_code,
-            models.TelemetryData.ts == subq.c.max_ts,
-        ),
-    ).all()
+    tsdb = get_tsdb_store()
+    rows = tsdb.latest(satellite_id=satellite_id, param_codes=codes)
 
     return schemas.ok([_point_dict(r) for r in rows])
 
@@ -252,21 +228,11 @@ def simulate_telemetry(
                 "name": p.name,
             }
 
-    q = db.query(models.TelemetryData)
-    if satellite_id:
-        q = q.filter(models.TelemetryData.satellite_id == satellite_id)
-    if codes:
-        q = q.filter(models.TelemetryData.param_code.in_(codes))
-    if start_dt:
-        q = q.filter(models.TelemetryData.ts >= start_dt)
-    if end_dt:
-        q = q.filter(models.TelemetryData.ts <= end_dt)
-
-    total = q.count()
-    rows = q.order_by(models.TelemetryData.ts.asc()) \
-             .offset((page - 1) * page_size) \
-             .limit(page_size) \
-             .all()
+    tsdb = get_tsdb_store()
+    total, rows = tsdb.query(
+        satellite_id=satellite_id, param_codes=codes, channel_ids=None,
+        start_dt=start_dt, end_dt=end_dt, page=page, page_size=page_size,
+    )
 
     points = []
     for d in rows:
@@ -304,23 +270,8 @@ def realtime(
     """获取每个参数的最新值（与 /latest 逻辑相同，供前端 realtime 调用）"""
     codes = _split_codes(param_codes)
 
-    subq = db.query(
-        models.TelemetryData.param_code,
-        func.max(models.TelemetryData.ts).label("max_ts"),
-    )
-    if satellite_id:
-        subq = subq.filter(models.TelemetryData.satellite_id == satellite_id)
-    if codes:
-        subq = subq.filter(models.TelemetryData.param_code.in_(codes))
-    subq = subq.group_by(models.TelemetryData.param_code).subquery()
-
-    rows = db.query(models.TelemetryData).join(
-        subq,
-        and_(
-            models.TelemetryData.param_code == subq.c.param_code,
-            models.TelemetryData.ts == subq.c.max_ts,
-        ),
-    ).all()
+    tsdb = get_tsdb_store()
+    rows = tsdb.latest(satellite_id=satellite_id, param_codes=codes)
 
     return schemas.ok([_point_dict(r) for r in rows])
 

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..deps import get_current_user, get_db, log_action
+from ..tsdb import get_tsdb_store
 
 router = APIRouter()
 
@@ -61,31 +62,30 @@ def export_data(
     channel_ids: list[int] | None,
     db: Session,
 ) -> pd.DataFrame:
-    """查询 TelemetryData 行，按 ts 升序返回 DataFrame"""
-    q = db.query(models.TelemetryData).filter(
-        models.TelemetryData.ts >= start,
-        models.TelemetryData.ts <= end,
-        models.TelemetryData.param_code.in_(param_codes),
+    """从时序存储层查询遥测数据，按 ts 升序返回 DataFrame"""
+    tsdb = get_tsdb_store()
+    points = tsdb.query_all(
+        satellite_id=None,
+        param_codes=param_codes,
+        channel_ids=channel_ids,
+        start_dt=start,
+        end_dt=end,
     )
-    if channel_ids:
-        q = q.filter(models.TelemetryData.channel_id.in_(channel_ids))
-    q = q.order_by(models.TelemetryData.ts.asc())
-    rows = q.all()
 
-    if not rows:
+    if not points:
         return pd.DataFrame(columns=COLUMNS)
 
     data = [
         {
-            "ts": r.ts,
-            "param_code": r.param_code,
-            "raw_value": r.raw_value,
-            "value": r.value,
-            "quality": r.quality,
-            "satellite_id": r.satellite_id,
-            "channel_id": r.channel_id,
+            "ts": p.ts,
+            "param_code": p.param_code,
+            "raw_value": p.raw_value,
+            "value": p.value,
+            "quality": p.quality,
+            "satellite_id": p.satellite_id,
+            "channel_id": p.channel_id,
         }
-        for r in rows
+        for p in points
     ]
     return pd.DataFrame(data)
 

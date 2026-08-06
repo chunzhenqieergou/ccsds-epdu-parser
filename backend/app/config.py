@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     RECEIVER_PORT: int = 9001                # Socket 接收服务器 TCP 端口
     RECEIVER_UDP_PORT: int = 9002           # UDP 接收服务器端口
 
+    # 时序数据库（方案 4.2：TDengine / MongoDB，本项目实现 MongoDB + MySQL 回退）
+    TSDB_BACKEND: str = "mongodb"           # mongodb | mysql
+    MONGODB_URI: str = "mongodb://127.0.0.1:27017"
+    MONGODB_DB: str = "stms"
+    MONGODB_COLLECTION: str = "telemetry_data"
+    MONGODB_TTL_DAYS: int = 90              # TTL 自动清理：0 表示不启用
+
     # CORS：允许的前端来源
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",

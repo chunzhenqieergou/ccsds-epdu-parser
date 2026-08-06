@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..config import settings
 from ..database import SessionLocal
+from ..tsdb import get_tsdb_store
 from .simulator import simulator as _simulator, _load_channel_ids as _load_channels
 from ..services.sse import sse_publish, bus as sse_bus
 import asyncio
@@ -142,22 +143,22 @@ class ReceiverManager:
         param_points: list[dict] = result["param_points"]
         frames: list[dict] = result["frames"]
 
-        # ---- 1. 写入遥测数据 ----
-        telemetry_records: list[models.TelemetryData] = []
+        # ---- 1. 写入遥测数据（走时序存储层：MongoDB / MySQL 回退）----
+        tsdb = get_tsdb_store()
+        tsdb_points: list[dict] = []
         for pt in param_points:
-            record: models.TelemetryData = models.TelemetryData(
-                ts=ts,
-                satellite_id=pt["satellite_id"],
-                channel_id=pt.get("channel_id", 0),
-                param_code=pt["param_code"],
-                raw_value=pt.get("raw_value", 0),
-                value=pt.get("value", 0.0),
-                quality=pt.get("quality", "GOOD"),
-            )
-            telemetry_records.append(record)
-            db.add(record)
+            tsdb_points.append({
+                "ts": ts,
+                "satellite_id": pt["satellite_id"],
+                "channel_id": pt.get("channel_id", 0),
+                "param_code": pt["param_code"],
+                "raw_value": pt.get("raw_value", 0),
+                "value": pt.get("value", 0.0),
+                "quality": pt.get("quality", "GOOD"),
+            })
+        tsdb.insert_points(tsdb_points)
 
-        # ---- 2. 写入遥测原始帧 ----
+        # ---- 2. 写入遥测原始帧（元数据/原始帧仍存 MySQL）----
         for fr in frames:
             frame_record: models.TelemetryFrame = models.TelemetryFrame(
                 ts=ts,

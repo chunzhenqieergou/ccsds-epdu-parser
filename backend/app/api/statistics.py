@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..deps import get_current_user, get_db
+from ..tsdb import get_tsdb_store
 
 router = APIRouter()
 
@@ -58,17 +59,12 @@ def _query_values(
     start_dt: Optional[datetime],
     end_dt: Optional[datetime],
 ) -> list[float]:
-    """按条件查询遥测数据工程值列表"""
-    q = db.query(models.TelemetryData.value).filter(
-        models.TelemetryData.param_code == param_code
+    """按条件查询遥测数据工程值列表（走时序存储层）"""
+    tsdb = get_tsdb_store()
+    return tsdb.values(
+        param_code=param_code, satellite_id=satellite_id,
+        start_dt=start_dt, end_dt=end_dt,
     )
-    if satellite_id:
-        q = q.filter(models.TelemetryData.satellite_id == satellite_id)
-    if start_dt:
-        q = q.filter(models.TelemetryData.ts >= start_dt)
-    if end_dt:
-        q = q.filter(models.TelemetryData.ts <= end_dt)
-    return [row[0] for row in q.all()]
 
 
 def _query_values_with_ts(
@@ -78,17 +74,12 @@ def _query_values_with_ts(
     start_dt: Optional[datetime],
     end_dt: Optional[datetime],
 ) -> list[tuple[datetime, float]]:
-    """按条件查询遥测数据（时间戳 + 工程值），按时间升序"""
-    q = db.query(models.TelemetryData.ts, models.TelemetryData.value).filter(
-        models.TelemetryData.param_code == param_code
+    """按条件查询遥测数据（时间戳 + 工程值），按时间升序（走时序存储层）"""
+    tsdb = get_tsdb_store()
+    return tsdb.values_with_ts(
+        param_code=param_code, satellite_id=satellite_id,
+        start_dt=start_dt, end_dt=end_dt,
     )
-    if satellite_id:
-        q = q.filter(models.TelemetryData.satellite_id == satellite_id)
-    if start_dt:
-        q = q.filter(models.TelemetryData.ts >= start_dt)
-    if end_dt:
-        q = q.filter(models.TelemetryData.ts <= end_dt)
-    return q.order_by(models.TelemetryData.ts.asc()).all()
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +94,11 @@ def _do_basic_stats(
 ):
     start_dt = _parse_dt(start, "start")
     end_dt = _parse_dt(end, "end")
-    values = _query_values(db, param_code, satellite_id, start_dt, end_dt)
-    s = _calc_stats(values)
+    # 聚合统计走时序存储层（MongoDB 聚合管道 / MySQL 聚合函数）
+    s = get_tsdb_store().stats(
+        param_code=param_code, satellite_id=satellite_id,
+        start_dt=start_dt, end_dt=end_dt,
+    )
     return schemas.BasicStats(
         param_code=param_code,
         count=s["count"],
@@ -205,16 +199,11 @@ def _do_anomalies(
     start_dt = _parse_dt(start, "start")
     end_dt = _parse_dt(end, "end")
 
-    q = db.query(models.TelemetryData).filter(
-        models.TelemetryData.param_code == param_code
+    # 异常检测遍历时序存储层返回的遥测点
+    rows = get_tsdb_store().query_all(
+        satellite_id=satellite_id, param_codes=[param_code], channel_ids=None,
+        start_dt=start_dt, end_dt=end_dt,
     )
-    if satellite_id:
-        q = q.filter(models.TelemetryData.satellite_id == satellite_id)
-    if start_dt:
-        q = q.filter(models.TelemetryData.ts >= start_dt)
-    if end_dt:
-        q = q.filter(models.TelemetryData.ts <= end_dt)
-    rows = q.order_by(models.TelemetryData.ts.asc()).all()
 
     result: list[schemas.Anomaly] = []
     for r in rows:
