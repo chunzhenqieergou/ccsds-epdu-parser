@@ -43,6 +43,11 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (response) => {
+    // Blob 下载响应：保留原始 response，由调用方取 response.data（Blob）
+    // 否则下面的解包会把 Blob 直接返回，导致 API 层 .then(r => r.data) 取到 undefined
+    if (response.config.responseType === 'blob') {
+      return response
+    }
     const body = response.data
     if (body.code !== undefined && body.code !== 0) {
       ElMessage.error(body.message || '请求失败')
