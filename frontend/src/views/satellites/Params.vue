@@ -10,7 +10,7 @@
         <el-select v-model="filter.subsystem" placeholder="分系统筛选" clearable style="width: 160px" @change="handleFilter">
           <el-option v-for="s in subsystems" :key="s" :label="s" :value="s" />
         </el-select>
-        <el-select v-model="filter.satelliteId" placeholder="卫星筛选（可选）" clearable style="width: 200px" @change="handleFilter">
+        <el-select v-model="filter.satelliteId" placeholder="请选择卫星后查看参数" clearable style="width: 220px" @change="handleFilter">
           <el-option
             v-for="s in satelliteList"
             :key="s.id"
@@ -265,6 +265,11 @@ async function fetchSatellites() {
 }
 
 async function fetchData() {
+  if (!filter.satelliteId) {
+    tableData.value = []
+    pagination.total = 0
+    return
+  }
   loading.value = true
   try {
     const params = {
@@ -272,7 +277,7 @@ async function fetchData() {
       page_size: pagination.pageSize,
       keyword: filter.keyword || undefined,
       subsystem: filter.subsystem || undefined,
-      satellite_id: filter.satelliteId || undefined
+      satellite_id: filter.satelliteId
     }
     const res = await paramApi.list(params)
     tableData.value = res.items || []
@@ -293,9 +298,13 @@ function handleSizeChange() {
 }
 
 function openCreate() {
+  if (!filter.satelliteId) {
+    ElMessage.warning('请先选择卫星')
+    return
+  }
   editId.value = null
   dialogTitle.value = '新增参数'
-  Object.assign(form, defaultForm())
+  Object.assign(form, defaultForm(), { satellite_id: filter.satelliteId })
   dialogVisible.value = true
 }
 
