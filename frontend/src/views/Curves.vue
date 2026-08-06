@@ -150,6 +150,7 @@ let seriesColors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba
 // ---- 仪表盘状态 ----
 const gaugeEls = {}                  // code -> DOM
 const gaugeInstances = {}            // code -> echarts 实例
+const gaugeRanges = {}               // code -> {min, max} 会话内只扩不缩，防止表盘跳动
 let gaugeTimer = null
 
 async function fetchParams() {
@@ -367,12 +368,12 @@ function setGaugeRef(el, code) {
   }
 }
 
-function buildGaugeOption(meta, value) {
+function buildGaugeOption(code, meta, value) {
   const unit = meta?.unit || ''
   const tMin = meta?.threshold_min != null ? Number(meta.threshold_min) : null
   const tMax = meta?.threshold_max != null ? Number(meta.threshold_max) : null
 
-  // 量程推导：优先用阈值范围；否则以当前值为中心外扩
+  // 量程推导：优先用阈值范围；无阈值时以当前值为中心外扩
   let min, max
   if (tMin != null && tMax != null) {
     min = tMin
@@ -384,9 +385,24 @@ function buildGaugeOption(meta, value) {
     min = value != null ? value * 0.8 : 0
     max = value != null ? value * 1.2 : 100
   }
+
+  // 实际值超出量程时向外扩展 15% 余量，保证指针始终在表盘内
+  if (value != null) {
+    const margin = Math.abs(max - min) * 0.15
+    if (value < min) min = value - margin
+    if (value > max) max = value + margin
+  }
+
+  // 与历史量程合并（只扩不缩）：值波动时表盘刻度不来回跳
+  const prev = gaugeRanges[code]
+  if (prev) {
+    min = Math.min(min, prev.min)
+    max = Math.max(max, prev.max)
+  }
+  gaugeRanges[code] = { min, max }
   if (max - min < 1e-6) max = min + 1
 
-  // 阈值色带：低限以下红 → 正常绿 → 高限以上红
+  // 阈值色带：低限以下红 → 正常绿 → 高限以上红（按扩展后的量程计算比例）
   const range = max - min
   const seg = []
   if (tMin != null && tMin > min) seg.push([(tMin - min) / range, '#F56C6C'])
@@ -446,7 +462,7 @@ function renderGauge(code, meta, value) {
   if (!gaugeInstances[code]) {
     gaugeInstances[code] = echarts.init(el)
   }
-  gaugeInstances[code].setOption(buildGaugeOption(meta, value), true)
+  gaugeInstances[code].setOption(buildGaugeOption(code, meta, value), true)
 }
 
 async function refreshGauges() {
@@ -489,14 +505,16 @@ function stopGaugeAuto() {
   }
   Object.values(gaugeInstances).forEach((inst) => inst.dispose())
   Object.keys(gaugeInstances).forEach((k) => delete gaugeInstances[k])
+  Object.keys(gaugeRanges).forEach((k) => delete gaugeRanges[k])
 }
 
 watch(activeTab, async (tab) => {
   if (tab === 'gauge') {
     await nextTick()
-    // tab 切换后 DOM 可见，重建实例避免 0 尺寸
+    // tab 切换后 DOM 可见，重建实例避免 0 尺寸，并重置量程缓存
     Object.values(gaugeInstances).forEach((inst) => inst.dispose())
     Object.keys(gaugeInstances).forEach((k) => delete gaugeInstances[k])
+    Object.keys(gaugeRanges).forEach((k) => delete gaugeRanges[k])
     refreshGauges()
   }
 })
