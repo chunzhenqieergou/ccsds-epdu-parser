@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from .. import models, schemas
 from ..deps import get_current_user, require_operator, log_action, get_db
+from ..receiver.server import real_receiver
 
 router = APIRouter()
 
@@ -106,6 +107,8 @@ def start_channel(
     channel.running = 1
     db.commit()
     db.refresh(channel)
+    # 联动真实接收器：恢复接收该协议帧
+    real_receiver.set_protocol_enabled(channel.protocol_type, True)
     log_action(
         db, current_user, "启动通道",
         f"channel:{channel.id}",
@@ -131,6 +134,8 @@ def stop_channel(
     channel.running = 0
     db.commit()
     db.refresh(channel)
+    # 联动真实接收器：停止接收该协议帧
+    real_receiver.set_protocol_enabled(channel.protocol_type, False)
     log_action(
         db, current_user, "停止通道",
         f"channel:{channel.id}",

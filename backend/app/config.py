@@ -44,9 +44,10 @@ class Settings(BaseSettings):
     SIMULATOR_ENABLED: bool = True
     SIMULATOR_INTERVAL_MS: int = 1000       # 模拟帧生成间隔（毫秒），实时刷新率 >=1Hz
     SIMULATOR_CYCLE: int = 200              # 模拟曲线周期（帧数）
+    RECEIVER_ENABLED: bool = True           # 真实数据接收（TCP/UDP）开关
     RECEIVER_HOST: str = "127.0.0.1"
-    RECEIVER_PORT: int = 9001                # Socket 接收服务器 TCP 端口
-    RECEIVER_UDP_PORT: int = 9002           # UDP 接收服务器端口
+    RECEIVER_PORT: int = 9001                # Socket 接收服务器 TCP 端口（CCSDS CADU 定长帧）
+    RECEIVER_UDP_PORT: int = 9002           # UDP 接收服务器端口（1553B/CAN/RS422 单报文帧）
 
     # 时序数据库（方案 4.2：TDengine / MongoDB，本项目实现 MongoDB + MySQL 回退）
     TSDB_BACKEND: str = "mongodb"           # mongodb | mysql

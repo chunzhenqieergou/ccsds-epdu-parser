@@ -120,15 +120,20 @@ def _build_ccsds_frame(tick: int, params: list[models.TelemetryParam]) -> dict[s
 
     epdu_packet: bytes = epdu_header + attitude_data + crc_bytes
 
-    # CADU 帧拼接（256 字节）
-    mpdu_header: bytes = bytes([0x00, 0x00, 0x0C])
+    # CADU 帧拼接（256 字节）：MPDU 前导 12 字节填充，EPDU 从 first_header_pointer 指示处开始
+    mpdu_header: bytes = bytes([0x00, 0x00, 0x0C])  # first_header_pointer = 12
     data_zone_start: int = 7
+    epdu_offset: int = 12
     frame: bytearray = bytearray(256)
     frame[0:4] = asm
     frame[4:7] = mpdu_header
     epdu_len: int = len(epdu_packet)
-    frame[data_zone_start:data_zone_start + epdu_len] = epdu_packet
-    for i in range(data_zone_start + epdu_len, 252):
+    # 数据区前 12 字节填充 0xAA
+    for i in range(data_zone_start, data_zone_start + epdu_offset):
+        frame[i] = 0xAA
+    epdu_pos: int = data_zone_start + epdu_offset
+    frame[epdu_pos:epdu_pos + epdu_len] = epdu_packet
+    for i in range(epdu_pos + epdu_len, 252):
         frame[i] = 0xAA
     frame[252:256] = bytes([0x00, 0x00, 0x00, 0x00])
 

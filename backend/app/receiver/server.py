@@ -1,123 +1,234 @@
 """
-Socket / UDP 接收服务器
-=======================
-基于 asyncio 的最小化 TCP/UDP 接收服务，接收二进制帧后投递到解析队列。
+真实数据接收服务器（线程版）
+============================
+基于 socket + threading 的 TCP/UDP 帧接收器：
+  - TCP (RECEIVER_PORT=9001)：接收 CCSDS CADU 定长帧（256 字节），面向地面站数据流
+  - UDP (RECEIVER_UDP_PORT=9002)：接收 1553B / CAN / RS422 单报文帧（按特征嗅探协议）
 
-实际场景中 TCP Socket 接收来自卫星地面站的 CCSDS CADU 帧，
-UDP 端口可用于接收 1553B/CAN/RS422 等协议帧。
+收到的帧放入线程安全队列，由 ReceiverManager 的真实接收线程消费：
+  帧 → 协议解析 → 参数映射 → 入库(tsdb) + 原始帧入库 + SSE 推送 + 告警检测。
 
-当前实现将接收到的原始字节直接放入队列，由 manager 统一解析入库。
+通道启停联动：按协议类型过滤（channel.running=0 时丢弃该协议帧）。
 """
-
-import asyncio
 import logging
+import queue
+import socket
+import struct
+import threading
 
 from ..config import settings
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+CCSDS_FRAME_LEN: int = 256
+"""CCSDS CADU 定长帧长度"""
 
-class FrameReceiver:
-    """asyncio TCP/UDP 帧接收器。
 
-    对每个 TCP 连接按字节流接收，对 UDP 按报文接收。
+def detect_protocol(data: bytes) -> str | None:
+    """UDP 报文协议嗅探（按帧头特征识别）。
+
+    Args:
+        data: UDP 报文原始字节。
+
+    Returns:
+        str | None: 协议类型（RS422 / CAN / 1553B）或 None。
+    """
+    if len(data) < 2:
+        return None
+    # RS422 自定义帧头 0xAA 0x55
+    if data[0] == 0xAA and data[1] == 0x55:
+        return "RS422"
+    # CAN 标准帧：>H arb_id + B dlc + B unused + 数据域（总长 = 4 + dlc）
+    if len(data) >= 12:
+        arb_id: int = struct.unpack(">H", data[0:2])[0]
+        dlc: int = data[2]
+        if arb_id <= 0x7FF and dlc <= 8 and 4 + dlc <= len(data) <= 20:
+            return "CAN"
+    # 1553B：首字为命令字（RT 地址 5bit <= 31）
+    if len(data) >= 6:
+        cmd: int = struct.unpack(">H", data[0:2])[0]
+        rt: int = (cmd >> 11) & 0x1F
+        if rt <= 0x1F:
+            return "1553B"
+    return None
+
+
+def channel_id_for_protocol(protocol_type: str) -> int:
+    """协议类型 → channel_id（复用模拟器加载的通道映射）。"""
+    from .simulator import _CCSDS_CH, _M1553B_CH, _CAN_CH, _RS422_CH
+    mapping: dict[str, int] = {
+        "CCSDS": _CCSDS_CH,
+        "1553B": _M1553B_CH,
+        "CAN": _CAN_CH,
+        "RS422": _RS422_CH,
+    }
+    return mapping.get(protocol_type, 0)
+
+
+class RealFrameReceiver:
+    """TCP/UDP 真实数据接收器（线程版）。
+
+    帧格式:
+        (protocol_type, frame_bytes, channel_id)
     """
 
     def __init__(self) -> None:
-        self._tcp_server: asyncio.Server | None = None
-        self._udp_transport: asyncio.DatagramTransport | None = None
-        self._udp_protocol: "UdpProtocol | None" = None
-        self._frame_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self._queue: queue.Queue = queue.Queue(maxsize=2000)
+        self._running: bool = False
+        self._tcp_thread: threading.Thread | None = None
+        self._udp_thread: threading.Thread | None = None
+        self._enabled: dict[str, bool] = {}  # protocol_type -> 是否接收（通道启停联动）
 
+    # ------------------------------------------------------------------
+    # 对外接口
+    # ------------------------------------------------------------------
     @property
-    def frame_queue(self) -> asyncio.Queue:
-        """外部可通过此队列消费接收到的原始帧字节。"""
-        return self._frame_queue
+    def frame_queue(self) -> queue.Queue:
+        """接收到的真实帧队列（元素: (protocol_type, bytes, channel_id)）。"""
+        return self._queue
 
-    async def start(self) -> None:
-        """启动 TCP 和 UDP 监听。"""
-        host: str = settings.RECEIVER_HOST
-        tcp_port: int = settings.RECEIVER_PORT
-        udp_port: int = settings.RECEIVER_UDP_PORT
+    def set_protocol_enabled(self, protocol_type: str, enabled: bool) -> None:
+        """设置某协议通道是否接收（start/stop 接口联动）。"""
+        self._enabled[protocol_type] = enabled
 
+    def refresh_enabled_from_db(self) -> None:
+        """从数据库 channels 表刷新各协议通道的接收开关。"""
+        from ..database import SessionLocal
+        from .. import models
+        db = SessionLocal()
         try:
-            self._tcp_server = await asyncio.start_server(
-                self._handle_tcp_connection, host, tcp_port
-            )
-            logger.info("TCP 接收服务已启动 %s:%d", host, tcp_port)
-        except OSError as e:
-            logger.warning("TCP 接收服务启动失败 %s:%d: %s", host, tcp_port, e)
-
-    async def stop(self) -> None:
-        """停止 TCP 和 UDP 监听。"""
-        if self._tcp_server is not None:
-            self._tcp_server.close()
-            await self._tcp_server.wait_closed()
-            self._tcp_server = None
-            logger.info("TCP 接收服务已停止")
-
-    async def _handle_tcp_connection(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        """TCP 连接处理器：读入字节流并放入帧队列。
-
-        Args:
-            reader: asyncio 流读取器。
-            writer: asyncio 流写入器。
-        """
-        peer: str = writer.get_extra_info("peername", "unknown")
-        logger.info("TCP 客户端已连接 %s", peer)
-        try:
-            while True:
-                buf: bytes = await reader.read(4096)
-                if not buf:
-                    break
-                try:
-                    self._frame_queue.put_nowait(buf)
-                except asyncio.QueueFull:
-                    logger.warning("帧队列已满，丢弃来自 %s 的数据", peer)
-        except (asyncio.IncompleteReadError, ConnectionError, OSError):
-            pass
+            channels = db.query(models.Channel).all()
+            for ch in channels:
+                if ch.protocol_type:
+                    self._enabled[ch.protocol_type] = bool(ch.running)
         finally:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            logger.info("TCP 客户端已断开 %s", peer)
+            db.close()
 
+    def start(self) -> None:
+        """启动 TCP/UDP 接收线程。"""
+        if self._running:
+            return
+        self._running = True
+        self.refresh_enabled_from_db()
+        self._tcp_thread = threading.Thread(
+            target=self._tcp_loop, daemon=True, name="real-receiver-tcp"
+        )
+        self._udp_thread = threading.Thread(
+            target=self._udp_loop, daemon=True, name="real-receiver-udp"
+        )
+        self._tcp_thread.start()
+        self._udp_thread.start()
+        logger.info(
+            "真实数据接收已启动 TCP:%d(CCSDS) / UDP:%d(1553B/CAN/RS422)",
+            settings.RECEIVER_PORT, settings.RECEIVER_UDP_PORT,
+        )
 
-class UdpProtocol(asyncio.DatagramProtocol):
-    """UDP 协议处理器。"""
+    def stop(self) -> None:
+        """停止接收线程。"""
+        self._running = False
+        if self._tcp_thread is not None:
+            self._tcp_thread.join(timeout=3.0)
+            self._tcp_thread = None
+        if self._udp_thread is not None:
+            self._udp_thread.join(timeout=3.0)
+            self._udp_thread = None
+        logger.info("真实数据接收已停止")
 
-    def __init__(self, queue: asyncio.Queue) -> None:
-        super().__init__()
-        self._queue: asyncio.Queue = queue
-
-    def datagram_received(self, data: bytes, addr: tuple) -> None:
-        """UDP 报文回调。"""
+    # ------------------------------------------------------------------
+    # 内部
+    # ------------------------------------------------------------------
+    def _push(self, protocol_type: str, data: bytes) -> None:
+        if not self._running:
+            return
+        if self._enabled.get(protocol_type, True) is False:
+            return  # 该协议通道已停用，丢弃
         try:
-            self._queue.put_nowait(data)
-        except asyncio.QueueFull:
-            logger.warning("帧队列已满，丢弃来自 %s 的 UDP 数据", addr)
+            self._queue.put_nowait((protocol_type, data, channel_id_for_protocol(protocol_type)))
+        except queue.Full:
+            logger.warning("真实帧队列已满，丢弃 %s 帧", protocol_type)
+
+    def _tcp_loop(self) -> None:
+        """TCP 监听：CCSDS CADU 定长 256 字节切帧。"""
+        srv: socket.socket | None = None
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind((settings.RECEIVER_HOST, settings.RECEIVER_PORT))
+            srv.listen(5)
+            srv.settimeout(0.5)
+            logger.info("TCP 监听中 %s:%d", settings.RECEIVER_HOST, settings.RECEIVER_PORT)
+            while self._running:
+                try:
+                    conn, addr = srv.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                conn.settimeout(0.5)
+                logger.info("TCP 客户端已连接 %s", addr)
+                buf: bytes = b""
+                try:
+                    while self._running:
+                        try:
+                            chunk: bytes = conn.recv(65536)
+                        except socket.timeout:
+                            continue  # 超时仅作心跳检查，保持连接
+                        if not chunk:
+                            break
+                        buf += chunk
+                        # 定长切帧
+                        while len(buf) >= CCSDS_FRAME_LEN:
+                            frame: bytes = buf[:CCSDS_FRAME_LEN]
+                            buf = buf[CCSDS_FRAME_LEN:]
+                            self._push("CCSDS", frame)
+                except (ConnectionError, OSError):
+                    pass
+                finally:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                    logger.info("TCP 客户端已断开 %s", addr)
+        except OSError as e:
+            logger.error("TCP 接收服务启动失败 %s:%d: %s",
+                         settings.RECEIVER_HOST, settings.RECEIVER_PORT, e)
+        finally:
+            if srv is not None:
+                try:
+                    srv.close()
+                except OSError:
+                    pass
+
+    def _udp_loop(self) -> None:
+        """UDP 监听：单报文一帧，按特征识别协议。"""
+        srv: socket.socket | None = None
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            srv.bind((settings.RECEIVER_HOST, settings.RECEIVER_UDP_PORT))
+            srv.settimeout(0.5)
+            logger.info("UDP 监听中 %s:%d", settings.RECEIVER_HOST, settings.RECEIVER_UDP_PORT)
+            while self._running:
+                try:
+                    data, addr = srv.recvfrom(65536)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                proto = detect_protocol(data)
+                if proto is None:
+                    logger.debug("无法识别 UDP 报文协议，来自 %s", addr)
+                    continue
+                self._push(proto, data)
+        except OSError as e:
+            logger.error("UDP 接收服务启动失败 %s:%d: %s",
+                         settings.RECEIVER_HOST, settings.RECEIVER_UDP_PORT, e)
+        finally:
+            if srv is not None:
+                try:
+                    srv.close()
+                except OSError:
+                    pass
 
 
-async def start_server() -> FrameReceiver:
-    """启动接收服务（便捷函数）。
-
-    Returns:
-        FrameReceiver: 已启动的接收器实例。
-    """
-    receiver: FrameReceiver = FrameReceiver()
-    await receiver.start()
-    return receiver
-
-
-async def stop_server(receiver: FrameReceiver | None) -> None:
-    """停止接收服务（便捷函数）。
-
-    Args:
-        receiver: 接收器实例。
-    """
-    if receiver is not None:
-        await receiver.stop()
+# 模块级单例 — manager 直接使用
+real_receiver: RealFrameReceiver = RealFrameReceiver()
