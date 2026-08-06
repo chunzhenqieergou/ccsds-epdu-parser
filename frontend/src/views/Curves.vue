@@ -63,12 +63,44 @@
         </div>
         <div ref="historyChartRef" class="chart-container"></div>
       </el-tab-pane>
+
+      <el-tab-pane label="仪表盘" name="gauge">
+        <div class="toolbar">
+          <el-select
+            v-model="gaugeParams"
+            multiple
+            filterable
+            placeholder="请选择要监控的参数"
+            style="width: 400px"
+            collapse-tags
+            collapse-tags-tooltip
+          >
+            <el-option
+              v-for="p in paramList"
+              :key="p.id"
+              :label="p.param_code + ' (' + (p.name || p.param_code) + ')'"
+              :value="p.param_code"
+            />
+          </el-select>
+          <el-switch v-model="gaugeAuto" active-text="自动刷新" @change="onGaugeAutoChange" />
+          <el-button @click="refreshGauges" :loading="gaugeLoading" size="small">刷新</el-button>
+          <el-tag v-if="gaugeLastUpdate" size="small" type="info">
+            更新于 {{ dayjs(gaugeLastUpdate).format('HH:mm:ss') }}
+          </el-tag>
+        </div>
+        <el-empty v-if="gaugeParams.length === 0" description="请选择要监控的遥测参数" />
+        <div v-else class="gauge-grid">
+          <div v-for="code in gaugeParams" :key="code" class="gauge-item">
+            <div :ref="(el) => setGaugeRef(el, code)" class="gauge-box"></div>
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
@@ -81,6 +113,10 @@ const activeTab = ref('realtime')
 const paramList = ref([])
 const selectedParams = ref([])
 const historyParams = ref([])
+const gaugeParams = ref([])
+const gaugeAuto = ref(false)
+const gaugeLoading = ref(false)
+const gaugeLastUpdate = ref(null)
 
 const realtimeChartRef = ref(null)
 const historyChartRef = ref(null)
@@ -110,6 +146,11 @@ const realtimeSeriesMap = ref({})    // { [param_code]: Map<tsMs, value> }
 let lastCursorMs = 0                 // 已经收到过的最大 ts（毫秒），用于增量拉取
 let pollTimer = null                 // 轮询定时器句柄
 let seriesColors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc']
+
+// ---- 仪表盘状态 ----
+const gaugeEls = {}                  // code -> DOM
+const gaugeInstances = {}            // code -> echarts 实例
+let gaugeTimer = null
 
 async function fetchParams() {
   try {
@@ -317,12 +358,147 @@ function exportPng(mode) {
   ElMessage.success('图片已导出')
 }
 
+// ===================================================================
+// 仪表盘（ECharts gauge）
+// ===================================================================
+function setGaugeRef(el, code) {
+  if (el) {
+    gaugeEls[code] = el
+  }
+}
+
+function buildGaugeOption(meta, value) {
+  const unit = meta?.unit || ''
+  const tMin = meta?.threshold_min != null ? Number(meta.threshold_min) : null
+  const tMax = meta?.threshold_max != null ? Number(meta.threshold_max) : null
+
+  // 量程推导：优先用阈值范围；否则以当前值为中心外扩
+  let min, max
+  if (tMin != null && tMax != null) {
+    min = tMin
+    max = tMax
+  } else if (tMax != null) {
+    min = value != null ? Math.min(0, value - Math.abs(tMax - value) * 0.5) : 0
+    max = tMax
+  } else {
+    min = value != null ? value * 0.8 : 0
+    max = value != null ? value * 1.2 : 100
+  }
+  if (max - min < 1e-6) max = min + 1
+
+  // 阈值色带：低限以下红 → 正常绿 → 高限以上红
+  const range = max - min
+  const seg = []
+  if (tMin != null && tMin > min) seg.push([(tMin - min) / range, '#F56C6C'])
+  const midEnd = tMax != null ? (tMax - min) / range : 1
+  seg.push([Math.max(seg.length ? seg[seg.length - 1][0] : 0, midEnd), '#67C23A'])
+  if (tMax != null && tMax < max) seg.push([1, '#F56C6C'])
+
+  return {
+    series: [
+      {
+        type: 'gauge',
+        min,
+        max,
+        startAngle: 210,
+        endAngle: -30,
+        radius: '95%',
+        center: ['50%', '60%'],
+        splitNumber: 8,
+        progress: { show: true, width: 14, roundCap: true },
+        axisLine: { lineStyle: { width: 14, color: seg } },
+        axisTick: { distance: -24, length: 4 },
+        splitLine: { distance: -26, length: 10 },
+        axisLabel: { distance: -34, fontSize: 10, color: '#999' },
+        pointer: { width: 5, length: '60%' },
+        anchor: { show: true, size: 9, itemStyle: { color: '#909399' } },
+        title: {
+          offsetCenter: [0, '82%'],
+          fontSize: 13,
+          color: '#555'
+        },
+        detail: {
+          valueAnimation: true,
+          formatter: (v) => (value == null ? '-' : v.toFixed(2)),
+          fontSize: 20,
+          fontWeight: 500,
+          color: value == null ? '#bbb' : (value > (tMax ?? Infinity) || value < (tMin ?? -Infinity) ? '#F56C6C' : '#303133'),
+          offsetCenter: [0, '58%']
+        },
+        data: [{ value: value ?? min, name: `${meta?.name || code}${unit ? ' (' + unit + ')' : ''}` }]
+      }
+    ]
+  }
+}
+
+function renderGauge(code, meta, value) {
+  const el = gaugeEls[code]
+  if (!el) return
+  if (!gaugeInstances[code]) {
+    gaugeInstances[code] = echarts.init(el)
+  }
+  gaugeInstances[code].setOption(buildGaugeOption(meta, value), true)
+}
+
+async function refreshGauges() {
+  if (!gaugeParams.value.length) return
+  gaugeLoading.value = true
+  try {
+    const data = await telemetryApi.latest()
+    const items = Array.isArray(data) ? data : (data.data || [])
+    const latestMap = {}
+    items.forEach((it) => {
+      latestMap[it.param_code] = it
+    })
+    gaugeParams.value.forEach((code) => {
+      const meta = paramList.value.find((p) => (p.param_code || p.code) === code)
+      const cur = latestMap[code]
+      renderGauge(code, meta, cur ? Number(cur.value) : null)
+    })
+    gaugeLastUpdate.value = Date.now()
+  } catch {
+    // 网络异常时保留上次数据
+  } finally {
+    gaugeLoading.value = false
+  }
+}
+
+function onGaugeAutoChange(val) {
+  if (val) {
+    refreshGauges()
+    gaugeTimer = setInterval(refreshGauges, 2000)
+  } else if (gaugeTimer) {
+    clearInterval(gaugeTimer)
+    gaugeTimer = null
+  }
+}
+
+function stopGaugeAuto() {
+  if (gaugeTimer) {
+    clearInterval(gaugeTimer)
+    gaugeTimer = null
+  }
+  Object.values(gaugeInstances).forEach((inst) => inst.dispose())
+  Object.keys(gaugeInstances).forEach((k) => delete gaugeInstances[k])
+}
+
+watch(activeTab, async (tab) => {
+  if (tab === 'gauge') {
+    await nextTick()
+    // tab 切换后 DOM 可见，重建实例避免 0 尺寸
+    Object.values(gaugeInstances).forEach((inst) => inst.dispose())
+    Object.keys(gaugeInstances).forEach((k) => delete gaugeInstances[k])
+    refreshGauges()
+  }
+})
+
 onMounted(async () => {
   await fetchParams()
 })
 
 onUnmounted(() => {
   stopPolling()
+  stopGaugeAuto()
 })
 </script>
 
@@ -333,4 +509,20 @@ onUnmounted(() => {
 .page-desc { margin: 0; color: #999; font-size: 14px; }
 .toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 0; flex-wrap: wrap; }
 .chart-container { width: 100%; height: 520px; }
+.gauge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  padding: 12px 0;
+}
+.gauge-item {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  padding: 8px;
+}
+.gauge-box {
+  width: 100%;
+  height: 240px;
+}
 </style>
