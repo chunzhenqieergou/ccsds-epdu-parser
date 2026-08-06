@@ -402,20 +402,20 @@ function buildGaugeOption(meta, value) {
         max,
         startAngle: 210,
         endAngle: -30,
-        radius: '85%',
+        radius: '70%',
         center: ['50%', '58%'],
         splitNumber: 12,
         progress: { show: true, width: 14, roundCap: true },
         axisLine: { lineStyle: { width: 14, color: seg } },
-        axisTick: { distance: -22, length: 7, lineStyle: { color: '#909399', width: 1.5 } },
+        axisTick: { distance: -18, length: 7, lineStyle: { color: '#909399', width: 1.5 } },
         splitLine: {
-          distance: -26,
+          distance: -22,
           length: 14,
           lineStyle: { color: '#909399', width: 1.5 }
         },
         axisLabel: {
-          distance: -36,
-          fontSize: 13,
+          distance: -28,
+          fontSize: 12,
           color: '#666',
           formatter: (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : v.toFixed(1))
         },
@@ -520,15 +520,15 @@ onUnmounted(() => {
 .chart-container { width: 100%; height: 520px; }
 .gauge-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
   padding: 12px 0;
 }
 .gauge-item {
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  padding: 8px;
+  padding: 4px;
 }
 .gauge-box {
   width: 100%;
