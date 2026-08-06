@@ -6,6 +6,7 @@
 import asyncio
 import json
 import math
+import struct
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional
@@ -20,6 +21,9 @@ from ..database import get_db as _get_db
 from ..security import get_token_subject
 from ..services.sse import event_stream_generator, sse_subscribe
 from ..tsdb import get_tsdb_store
+from ..protocols import ccsds, rs422
+from ..protocols import m1553b as m1553b_mod
+from ..protocols import can as can_mod
 
 router = APIRouter()
 
@@ -369,3 +373,24 @@ async def sse_endpoint(
                 "X-Accel-Buffering": "no",
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# 8. 帧解析详情（数据接收与解析：任意十六进制帧 → 结构化字段）
+# ---------------------------------------------------------------------------
+@router.post("/parse-frame")
+def parse_frame_detail(
+    body: schemas.ParseFrameRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """[POST] 解析十六进制协议帧，返回结构化字段（供前端整帧解析视图/调试）"""
+    from .frame_parser import parse_frame_detail as _do_parse
+
+    try:
+        clean: str = body.hex_data.replace(" ", "").replace("\n", "").replace("\t", "")
+        data: bytes = bytes.fromhex(clean)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="hex_data 格式无效")
+    if not data:
+        raise HTTPException(status_code=400, detail="帧内容为空")
+    return schemas.ok(_do_parse(body.protocol_type.upper(), data))

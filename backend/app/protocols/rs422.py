@@ -181,6 +181,7 @@ class Rs422Parser:
             self._buffer = self._buffer[expected:]
             self._state = self._STATE_IDLE
             if result is not None and result["crc_ok"]:
+                result["raw_bytes"] = frame_bytes  # 供接收链路使用
                 return result
         return None
 

@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     RECEIVER_HOST: str = "127.0.0.1"
     RECEIVER_PORT: int = 9001                # Socket 接收服务器 TCP 端口（CCSDS CADU 定长帧）
     RECEIVER_UDP_PORT: int = 9002           # UDP 接收服务器端口（1553B/CAN/RS422 单报文帧）
+    # 串口接收（方案 3.3：PySerial RS422 串口数据读取；无串口时自动跳过）
+    RECEIVER_SERIAL_ENABLED: bool = False
+    RECEIVER_SERIAL_PORT: str = "COM3"
+    RECEIVER_SERIAL_BAUD: int = 115200
 
     # 时序数据库（方案 4.2：TDengine / MongoDB，本项目实现 MongoDB + MySQL 回退）
     TSDB_BACKEND: str = "mongodb"           # mongodb | mysql

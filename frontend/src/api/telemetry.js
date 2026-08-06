@@ -5,7 +5,8 @@ export const telemetryApi = {
   latest: (params) => http.get('/telemetry/latest', { params }).then((r) => r.data),
   realtime: (params) => http.get('/telemetry/realtime', { params }).then((r) => r.data),
   frames: (params) => http.get('/telemetry/frames', { params }).then((r) => r.data),
-  frame: (id) => http.get(`/telemetry/frames/${id}`).then((r) => r.data)
+  frame: (id) => http.get(`/telemetry/frames/${id}`).then((r) => r.data),
+  parseFrame: (data) => http.post('/telemetry/parse-frame', data).then((r) => r.data)
 }
 
 export const statisticsApi = {

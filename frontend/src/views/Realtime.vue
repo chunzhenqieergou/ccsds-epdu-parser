@@ -135,21 +135,50 @@
       </div>
     </div>
 
-    <el-drawer v-model="showFrameDrawer" title="最新帧" size="520px" direction="rtl">
+    <el-drawer v-model="showFrameDrawer" title="最新帧" size="620px" direction="rtl">
       <template v-if="store.recentFrames.length">
         <div class="frame-selector">
           <el-select v-model="selectedFrameIndex" placeholder="选择帧" size="small" style="width: 100%">
             <el-option
               v-for="(f, i) in store.recentFrames"
               :key="i"
-              :label="`帧 #${store.recentFrames.length - i} — ${formatFrameTime(f)}`"
+              :label="`帧 #${store.recentFrames.length - i} — ${formatFrameTime(f)} (${f.protocol_type || '未知'})`"
               :value="i"
             />
           </el-select>
         </div>
-        <div class="frame-hex">
-          <pre>{{ formatFrameHex(store.recentFrames[selectedFrameIndex]) }}</pre>
-        </div>
+        <el-tabs v-model="frameTab" class="frame-tabs">
+          <el-tab-pane label="十六进制" name="hex">
+            <div class="frame-hex">
+              <pre>{{ formatFrameHex(store.recentFrames[selectedFrameIndex]) }}</pre>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane label="解析详情" name="parse">
+            <div class="parse-toolbar">
+              <el-button
+                type="primary"
+                size="small"
+                :loading="parsingFrame"
+                @click="parseSelectedFrame"
+              >解析当前帧</el-button>
+              <el-tag v-if="parseResult" :type="parseResult.ok ? 'success' : 'danger'" size="small">
+                {{ parseResult.ok ? '解析通过' : (parseResult.message || '解析失败') }}
+              </el-tag>
+            </div>
+            <el-table
+              v-if="parseResult && parseResult.fields && parseResult.fields.length"
+              :data="parseResult.fields"
+              size="small"
+              border
+              max-height="52vh"
+            >
+              <el-table-column prop="name" label="字段" width="170" />
+              <el-table-column prop="value" label="值" show-overflow-tooltip />
+              <el-table-column prop="desc" label="说明" show-overflow-tooltip />
+            </el-table>
+            <el-empty v-else-if="!parsingFrame" description="点击「解析当前帧」查看结构化字段" />
+          </el-tab-pane>
+        </el-tabs>
       </template>
       <el-empty v-else description="暂无帧数据" />
     </el-drawer>
@@ -162,6 +191,7 @@ import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import { useTelemetryStore } from '../stores/telemetry'
 import { satelliteApi, paramApi, channelApi } from '../api/satellite'
+import { telemetryApi } from '../api/telemetry'
 
 const store = useTelemetryStore()
 
@@ -173,6 +203,9 @@ const treeFilter = ref('')
 const showFrameDrawer = ref(false)
 const selectedFrameIndex = ref(0)
 const displayMode = ref('value')
+const frameTab = ref('hex')
+const parseResult = ref(null)
+const parsingFrame = ref(false)
 
 const selectedParamCodes = ref([])
 const paramMetaMap = reactive({})
@@ -374,6 +407,29 @@ function formatFrameHex(frame) {
   }
 }
 
+async function parseSelectedFrame() {
+  const frame = store.recentFrames[selectedFrameIndex]
+  if (!frame) return
+  const rawHex = frame.raw_hex || frame.hex || frame.rawHex || frame.data
+  if (!rawHex) {
+    ElMessage.warning('该帧无十六进制数据')
+    return
+  }
+  parsingFrame.value = true
+  parseResult.value = null
+  try {
+    const res = await telemetryApi.parseFrame({
+      protocol_type: frame.protocol_type || 'CCSDS',
+      hex_data: typeof rawHex === 'string' ? rawHex : ''
+    })
+    parseResult.value = res
+  } catch {
+    ElMessage.error('解析失败，请检查协议类型与帧格式')
+  } finally {
+    parsingFrame.value = false
+  }
+}
+
 watch(selectedFrameIndex, () => {
   showFrameDrawer.value = true
 })
@@ -547,7 +603,18 @@ onBeforeUnmount(() => {
 }
 
 .frame-selector {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.frame-tabs {
+  margin-top: 4px;
+}
+
+.parse-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .frame-hex {

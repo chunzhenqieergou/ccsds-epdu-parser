@@ -15,8 +15,10 @@ import queue
 import socket
 import struct
 import threading
+import time
 
 from ..config import settings
+from ..protocols.rs422 import Rs422Parser
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -77,6 +79,8 @@ class RealFrameReceiver:
         self._running: bool = False
         self._tcp_thread: threading.Thread | None = None
         self._udp_thread: threading.Thread | None = None
+        self._serial_thread: threading.Thread | None = None
+        self._serial: object | None = None  # pyserial 串口对象（惰性打开）
         self._enabled: dict[str, bool] = {}  # protocol_type -> 是否接收（通道启停联动）
 
     # ------------------------------------------------------------------
@@ -122,6 +126,49 @@ class RealFrameReceiver:
             "真实数据接收已启动 TCP:%d(CCSDS) / UDP:%d(1553B/CAN/RS422)",
             settings.RECEIVER_PORT, settings.RECEIVER_UDP_PORT,
         )
+        if settings.RECEIVER_SERIAL_ENABLED:
+            self._start_serial()
+
+    def _start_serial(self) -> None:
+        """启动串口 RS422 接收（无串口/未装 pyserial 时仅警告，不阻塞启动）。"""
+        try:
+            import serial  # noqa: F401
+        except ImportError:
+            logger.warning("pyserial 未安装，串口 RS422 接收不可用")
+            return
+        port: str = settings.RECEIVER_SERIAL_PORT
+        try:
+            self._serial = serial.Serial(port, settings.RECEIVER_SERIAL_BAUD, timeout=0.2)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "无法打开串口 %s: %s（可安装虚拟串口 com0com 后启用）", port, e
+            )
+            return
+        self._serial_thread = threading.Thread(
+            target=self._serial_loop, daemon=True, name="real-receiver-serial"
+        )
+        self._serial_thread.start()
+        logger.info("串口 RS422 接收已启动 %s @ %d baud", port, settings.RECEIVER_SERIAL_BAUD)
+
+    def _serial_loop(self) -> None:
+        """串口循环：逐字节喂 Rs422Parser 状态机组帧，完整帧进入真实接收队列。"""
+        parser: Rs422Parser = Rs422Parser()
+        while self._running:
+            try:
+                if self._serial is None:
+                    break
+                n: int = self._serial.in_waiting
+                if n <= 0:
+                    time.sleep(0.05)
+                    continue
+                chunk: bytes = self._serial.read(n)
+                for b in chunk:
+                    result = parser.feed(b)
+                    if result and result.get("raw_bytes"):
+                        self._push("RS422", result["raw_bytes"])
+            except Exception:  # noqa: BLE001
+                logger.exception("串口读取异常")
+                time.sleep(1)
 
     def stop(self) -> None:
         """停止接收线程。"""
@@ -132,6 +179,15 @@ class RealFrameReceiver:
         if self._udp_thread is not None:
             self._udp_thread.join(timeout=3.0)
             self._udp_thread = None
+        if self._serial_thread is not None:
+            self._serial_thread.join(timeout=3.0)
+            self._serial_thread = None
+        if self._serial is not None:
+            try:
+                self._serial.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._serial = None
         logger.info("真实数据接收已停止")
 
     # ------------------------------------------------------------------

@@ -30,6 +30,15 @@ class PageResult(BaseModel, Generic[T]):
     items: list[T]
 
 
+# ---------------------------------------------------------------------------
+# 帧解析详情（数据接收与解析模块）
+# ---------------------------------------------------------------------------
+class ParseFrameRequest(BaseModel):
+    """帧解析请求：协议类型 + 十六进制帧"""
+    protocol_type: str = Field(..., description="协议类型: CCSDS/1553B/CAN/RS422")
+    hex_data: str = Field(..., description="帧十六进制字符串（可含空格/换行）")
+
+
 def ok(data: Any = None, message: str = "ok", code: int = 0) -> ApiResponse:
     return ApiResponse(code=code, message=message, data=data)
 
