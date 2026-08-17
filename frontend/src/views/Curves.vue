@@ -50,7 +50,7 @@
             multiple
             filterable
             placeholder="请选择遥测参数"
-            style="width: 360px"
+            style="width: 320px"
             collapse-tags
             collapse-tags-tooltip
           >
@@ -78,6 +78,16 @@
               :value="p.value"
             />
           </el-select>
+          <el-tooltip
+            content="用滑动窗口 IQR 把局部异常点当作缺失处理，再交给平滑插值，避免出现'水滴状'伪影"
+            placement="top"
+          >
+            <el-switch
+              v-model="historyClipIqr"
+              size="small"
+              active-text="去异常"
+            />
+          </el-tooltip>
           <el-button type="primary" @click="queryHistory" :loading="historyLoading">查询</el-button>
           <el-button @click="exportPng('history')" :disabled="!historyReady" size="small">导出图片</el-button>
         </div>
@@ -159,6 +169,7 @@ const gaugeLastUpdate = ref(null)
 const smoothPresets = SMOOTH_PRESETS
 const realtimeSmooth = ref('mid')   // 实时曲线默认中档（EWMA α=0.3），滞后可接受
 const historySmooth = ref('mid')    // 历史曲线默认中档（SG w=7）
+const historyClipIqr = ref(true)    // 历史曲线默认开 IQR 异常值裁剪，关掉能恢复"原汁原味"
 
 const realtimeChartRef = ref(null)
 const historyChartRef = ref(null)
@@ -169,6 +180,8 @@ const historyLoading = ref(false)
 const realtimeConnected = ref(false)
 
 const historyTimeRange = ref([])
+// 缓存历史曲线原始 [t, v] 序列（按 param_code），切档位 / 去异常开关时直接复用，不必重查后端
+const historyRawSeries = ref({})
 
 const {
   chartInstance: realtimeChart,
@@ -344,12 +357,53 @@ function stopPolling() {
   }
 }
 
-// 平滑档位变化时即时重绘（已有数据不需要重新拉）
-watch([realtimeSmooth, historySmooth], () => {
+// 平滑档位 / 去异常开关变化时即时重绘（用历史缓存的原数据，不必重新拉）
+watch([realtimeSmooth, historySmooth, historyClipIqr], () => {
   if (activeTab.value === 'realtime' && realtimeSeriesMap.value && Object.keys(realtimeSeriesMap.value).length) {
     setRealtimeOption(buildRealtimeOption(), true)
+  } else if (Object.keys(historyRawSeries.value).length) {
+    renderHistoryOption()
   }
 })
+
+// 把 historyRawSeries（原始 [t, v]）按当前档位 + IQR 开关加工成最终 series，
+// 并写入图表。供 queryHistory 初次拉取后、以及切档位 / 切去异常开关时复用
+function renderHistoryOption() {
+  if (!Object.keys(historyRawSeries.value).length) return
+  const smoothOpt = presetToOpts(smoothPresets.find((p) => p.value === historySmooth.value) || smoothPresets[1])
+  smoothOpt.clipIqr = historyClipIqr.value
+  smoothOpt.clipWindow = 21
+  smoothOpt.clipK = 1.5
+  const seriesMap = {}
+  Object.keys(historyRawSeries.value).forEach((code) => {
+    const arr = (historyRawSeries.value[code] || []).slice().sort((a, b) => a[0] - b[0])
+    seriesMap[code] = smoothSeries(arr, smoothOpt)
+  })
+  const series = historyParams.value.map((code, i) => ({
+    name: seriesName(code),
+    type: 'line',
+    data: seriesMap[code] || [],
+    smooth: historySmooth.value !== 'off',
+    smoothMonotone: 'x',
+    showSymbol: false,
+    sampling: (seriesMap[code] || []).length > 400 ? 'lttb' : false,
+    connectNulls: true,
+    lineStyle: { width: 2 },
+    itemStyle: { color: seriesColors[i % seriesColors.length] }
+  }))
+  setHistoryOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: historyParams.value.map(seriesName), bottom: 0 },
+    grid: { left: 60, right: 30, top: 30, bottom: 50 },
+    xAxis: { type: 'time', name: '时间', nameTextStyle: { color: '#98a1b3' } },
+    yAxis: { type: 'value', name: '数值', splitLine: { lineStyle: { type: 'dashed' } } },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', start: 0, end: 100, height: 20, bottom: 22 }
+    ],
+    series
+  }, true)
+}
 
 async function queryHistory() {
   if (!historyParams.value.length || !historyTimeRange.value?.length) {
@@ -368,48 +422,18 @@ async function queryHistory() {
       max_points: 3000
     })
     const items = Array.isArray(data) ? data : (data.points || data.items || data.records || [])
-    const seriesMap = {}
-    historyParams.value.forEach(code => { seriesMap[code] = [] })
+    const raw = {}
+    historyParams.value.forEach(code => { raw[code] = [] })
     items.forEach(item => {
       const code = item.param_code
-      if (seriesMap[code]) {
+      if (raw[code]) {
         const ts = item.ts || item.timestamp || item.time || item.created_at
-        const tMs = tsToMs(ts)
-        seriesMap[code].push([tMs, Number(item.value)])
+        raw[code].push([tsToMs(ts), Number(item.value)])
       }
     })
-    // 历史数据走批处理：每条序列先按时间排序，再用 SG 平滑（用户可选档位）
-    const smoothOpt = presetToOpts(smoothPresets.find((p) => p.value === historySmooth.value) || smoothPresets[1])
-    Object.keys(seriesMap).forEach((code) => {
-      const arr = seriesMap[code].sort((a, b) => a[0] - b[0])
-      seriesMap[code] = smoothSeries(arr, smoothOpt)
-    })
-    const series = historyParams.value.map((code, i) => ({
-      name: seriesName(code),
-      type: 'line',
-      data: seriesMap[code] || [],
-      // 渲染层 bezier：始终开
-      smooth: historySmooth.value !== 'off',
-      smoothMonotone: 'x',
-      showSymbol: false,
-      sampling: (seriesMap[code] || []).length > 400 ? 'lttb' : false,
-      connectNulls: true,
-      lineStyle: { width: 2 },
-      itemStyle: { color: seriesColors[i % seriesColors.length] }
-    }))
-    setHistoryOption({
-      tooltip: { trigger: 'axis' },
-      legend: { data: historyParams.value.map(seriesName), bottom: 0 },
-      grid: { left: 60, right: 30, top: 30, bottom: 50 },
-      xAxis: { type: 'time', name: '时间', nameTextStyle: { color: '#98a1b3' } },
-      yAxis: { type: 'value', name: '数值', splitLine: { lineStyle: { type: 'dashed' } } },
-      dataZoom: [
-        { type: 'inside', start: 0, end: 100 },
-        { type: 'slider', start: 0, end: 100, height: 20, bottom: 22 }
-      ],
-      series
-    }, true)
-    historyReady.value = true
+    historyRawSeries.value = raw
+    renderHistoryOption()
+    historyReady.value = Object.values(raw).some((arr) => arr.length > 0)
   } catch {
   } finally {
     historyLoading.value = false

@@ -200,12 +200,46 @@ export function sgSmooth(values, window = 5, order = 2) {
  *   - window: MA/SG 窗口，必须 ≥3     默认 5
  *   - order: SG 多项式阶数            默认 2
  *   - enabled: false 时原样返回       默认 true
+ *   - medianWindow: 中值预滤波窗口，0 关闭  默认 0（默认不预滤波）
+ *   - clipIqr: 是否启用 IQR 异常裁剪  默认 false
+ *   - clipWindow: 局部 IQR 窗口大小   默认 21（奇数附近最佳）
+ *   - clipK: 1.5 = 标准箱线图规则     默认 1.5
+ *
+ *   去噪链路执行顺序：
+ *     中值预滤波（消除小幅振荡簇尖刺）
+ *       → 局部 IQR 异常检测（消灭极端离群点）
+ *       → 命中点 y 置 null
+ *       → EWMA / SG / MA 拟合缺失段
+ *       → ECharts bezier 平滑渲染
  * ------------------------------------------------------------------------- */
 export function smoothSeries(points, opts = {}) {
   if (!Array.isArray(points) || points.length === 0) return points
-  const { method = 'ewma', alpha = 0.3, window = 5, order = 2, enabled = true } = opts
+  const {
+    method = 'ewma',
+    alpha = 0.3,
+    window = 5,
+    order = 2,
+    enabled = true,
+    medianWindow = 0,
+    clipIqr = false,
+    clipWindow = 21,
+    clipK = 1.5
+  } = opts
   if (!enabled) return points
-  const ys = points.map((p) => (p == null ? null : p[1]))
+
+  let pts = points
+  let ys = pts.map((p) => (p == null ? null : p[1]))
+  if (medianWindow > 0) {
+    // 中值预滤波：直接对 y 序列去抖（不只用于 IQR 检测的中间步骤）
+    ys = medianSmooth(ys, medianWindow)
+  }
+  if (clipIqr) {
+    // IQR 在（已去抖的）y 上检测异常
+    const mask = rollingIqrMask(ys, clipWindow, clipK)
+    pts = clipOutliers(pts, mask)
+    ys = pts.map((p) => (p == null ? null : p[1]))
+  }
+
   let sm
   if (method === 'sg') sm = sgSmooth(ys, window, order)
   else if (method === 'ma') sm = maSmooth(ys, window)
@@ -237,4 +271,94 @@ export function presetToOpts(preset) {
     window: preset.window,
     order: preset.order
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. 滚动 IQR 异常值检测 / 裁剪
+ *
+ *    问题场景：历史曲线中间出现一坨明显异常的"水滴"或"厚带"，
+ *    通常是某段时间内数据值剧烈震荡 / 出现极端异常点。
+ *    全局 IQR 容易被这一段异常拉宽阈值导致失效，
+ *    所以采用局部（滑动窗口）IQR：每个点的判定只看它周围 ±half 区间。
+ *
+ *    算法：
+ *      1. 对每个点 i，取窗口 [i-half, i+half] 内所有有效值
+ *      2. 排序后取 Q1 / Q3，计算 IQR = Q3 - Q1
+ *      3. 阈值 [Q1 - k·IQR, Q3 + k·IQR]，k=1.5 即经典箱线图规则
+ *      4. 点值落在区间外 → 标记 false（当作 null 喂给后续平滑）
+ *
+ *    局限：
+ *      - 窗口太小 (<5 有效点) 时跳过检测，避免误杀
+ *      - 突变窗口（如阶跃）会被误判为异常。如有真实阶跃需求，
+ *        可在调用方传入 preClip=false 关闭
+ * ------------------------------------------------------------------------- */
+export function rollingIqrMask(values, window = 21, k = 1.5) {
+  if (!Array.isArray(values) || values.length === 0) return values.map(() => true)
+  const mask = new Array(values.length).fill(true)
+  const half = Math.max(1, Math.floor(window / 2))
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i]
+    if (v == null || Number.isNaN(Number(v))) {
+      mask[i] = false
+      continue
+    }
+    // 收集窗口内有效值
+    const w = []
+    for (let j = Math.max(0, i - half); j <= Math.min(values.length - 1, i + half); j++) {
+      const wv = values[j]
+      if (wv != null && !Number.isNaN(Number(wv))) w.push(Number(wv))
+    }
+    // 有效点太少，不做异常判定（信号本身稀疏，留给平滑自己处理）
+    if (w.length < 5) continue
+    const sorted = [...w].sort((a, b) => a - b)
+    const q1 = sorted[Math.floor(sorted.length * 0.25)]
+    const q3 = sorted[Math.floor(sorted.length * 0.75)]
+    const iqr = q3 - q1
+    // IQR=0（窗口内值全部相同）：放宽阈值为 ±1e-6 抖动，避免全部误杀
+    const span = iqr > 0 ? iqr : 1e-6
+    const lo = q1 - k * span
+    const hi = q3 + k * span
+    const n = Number(v)
+    if (n < lo || n > hi) mask[i] = false
+  }
+  return mask
+}
+
+// 按 mask 把命中点 y 值置 null，保留时间戳不变（给上层 SG/MA 当缺失处理）
+export function clipOutliers(points, mask) {
+  if (!Array.isArray(points)) return points
+  return points.map((p, i) => (mask[i] === false ? [p[0], null] : p))
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. 滑动中值滤波（pre-processing 去抖）
+ *
+ *    IQR 异常检测的盲区：低幅高频振荡簇
+ *    比如一段数据是 [0, 1, 0, 1, 0, 1, ...]，单点既偏离整体也不极端，
+ *    局部 IQR 完全检测不出来。但渲染时会糊成"水滴"。
+ *
+ *    中值滤波对这种簇天然免疫：取窗口中位，簇内点一律被替换为相邻中位值。
+ *    缺点是会轻微钝化真实拐点（峰高略微降低），
+ *    所以默认关闭，由上层 smoothSeries 在去噪链路中显式开启。
+ * ------------------------------------------------------------------------- */
+export function medianSmooth(values, window = 5) {
+  if (!Array.isArray(values) || values.length === 0) return values
+  const w = Math.max(2, Math.floor(Number(window) || 5))
+  if (w <= 1) return values.slice()
+  const half = Math.floor(w / 2)
+  const out = new Array(values.length)
+  for (let i = 0; i < values.length; i++) {
+    const ww = []
+    for (let j = Math.max(0, i - half); j <= Math.min(values.length - 1, i + half); j++) {
+      const v = values[j]
+      if (v != null && !Number.isNaN(Number(v))) ww.push(Number(v))
+    }
+    if (ww.length === 0) {
+      out[i] = values[i]
+    } else {
+      ww.sort((a, b) => a - b)
+      out[i] = ww[Math.floor(ww.length / 2)]
+    }
+  }
+  return out
 }
